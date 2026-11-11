@@ -94,9 +94,11 @@ try {
   assert.equal(await duplicate.locator('#start').isDisabled(), true);
   await duplicate.close();
 
-  const downloaded = page.waitForEvent('download');
-  await page.locator('#mixBackup').click();
-  const backup = await downloaded;
+  await page.locator('summary[data-i18n="mixBackupTitle"]').click();
+  const [backup] = await Promise.all([
+    page.waitForEvent('download'),
+    page.locator('#mixBackup').click(),
+  ]);
   assert.match(backup.suggestedFilename(), /^relay-wallet-backup-/);
   const backedUp = JSON.parse(await readFile(await backup.path(), 'utf8'));
   assert.equal(backedUp.session.id, stored.id);
