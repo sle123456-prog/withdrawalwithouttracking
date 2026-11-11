@@ -1,0 +1,5 @@
+{
+  "extName": { "message": "一次性中转钱包 (EVM Relay Wallet)" },
+  "extDesc": { "message": "为每次提币生成一次性 EVM 中转地址，收到资金后自动转入你的目标地址。" },
+  "extAction": { "message": "打开一次性中转钱包" }
+}

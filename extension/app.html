@@ -1,118 +1,122 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>一次性中转钱包</title>
+<title>One-Time Relay Wallet</title>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
 <main>
   <header>
-    <h1>一次性中转钱包</h1>
-    <p class="sub">每次提币生成一个全新的 EVM 地址，到账后自动转入你的目标地址</p>
+    <div class="row between">
+      <h1 data-i18n="title"></h1>
+      <button id="lang" class="ghost small" data-i18n="langBtn"></button>
+    </div>
+    <p class="sub" data-i18n="subtitle"></p>
   </header>
 
-  <!-- 第一步：设置 -->
+  <!-- Step 1: setup -->
   <section id="setup" class="card">
-    <label>链
+    <label><span data-i18n="chain"></span>
       <select id="chain"></select>
     </label>
-    <label>接收的币种
+    <label><span data-i18n="asset"></span>
       <select id="asset"></select>
     </label>
-    <label id="customTokenRow" hidden>代币合约地址
+    <label id="customTokenRow" hidden><span data-i18n="tokenContract"></span>
       <input id="customToken" placeholder="0x…" spellcheck="false" autocomplete="off">
     </label>
-    <label>目标地址 B（最终收款地址）
+    <label><span data-i18n="dest"></span>
       <input id="dest" placeholder="0x…" spellcheck="false" autocomplete="off">
     </label>
     <details>
-      <summary>高级：自定义 RPC</summary>
-      <label>RPC URL（留空使用内置公共节点）
+      <summary data-i18n="advanced"></summary>
+      <label><span data-i18n="rpcLabel"></span>
         <input id="rpc" placeholder="https://…" spellcheck="false" autocomplete="off">
       </label>
     </details>
     <p id="setupError" class="error" hidden></p>
-    <button id="start" class="primary">生成一次性地址</button>
+    <button id="start" class="primary" data-i18n="start"></button>
   </section>
 
-  <!-- 第二步：收款与转出 -->
+  <!-- Step 2: receive and forward -->
   <section id="session" class="card" hidden>
     <div class="row between">
       <span id="chainBadge" class="badge"></span>
-      <button id="reset" class="ghost">重置 / 新地址</button>
+      <button id="reset" class="ghost" data-i18n="reset"></button>
     </div>
 
-    <p class="hint">在交易所提币时，把下面的地址填为收款地址，并选择 <b id="netName"></b> 网络：</p>
+    <p class="hint" id="withdrawHint"></p>
     <div id="qr"></div>
     <div class="addr-row">
       <code id="address"></code>
-      <button id="copy">复制</button>
+      <button id="copy" data-i18n="copy"></button>
     </div>
 
     <div id="status" class="status"></div>
 
     <dl class="facts">
-      <dt>币种</dt><dd id="assetName"></dd>
-      <dt>Gas 方式</dt><dd id="gasMode"></dd>
-      <dt>目标地址 B</dt><dd><code id="destShow"></code></dd>
-      <dt>中转地址余额</dt><dd id="balances">—</dd>
+      <dt data-i18n="factAsset"></dt><dd id="assetName"></dd>
+      <dt data-i18n="factGas"></dt><dd id="gasMode"></dd>
+      <dt data-i18n="factDest"></dt><dd><code id="destShow"></code></dd>
+      <dt data-i18n="factBalance"></dt><dd id="balances">—</dd>
     </dl>
 
     <ul id="txs" class="txs"></ul>
 
     <details>
-      <summary>备份私钥（资金卡住时可导入任意钱包取回）</summary>
-      <p class="warn">任何拿到私钥的人都能转走该地址上的资金，请勿泄露。</p>
-      <button id="reveal" class="ghost">显示私钥</button>
+      <summary data-i18n="backupKey"></summary>
+      <p class="warn" data-i18n="keyWarn"></p>
+      <button id="reveal" class="ghost"></button>
       <code id="pk" class="pk" hidden></code>
     </details>
   </section>
 
   <section id="gasBox" class="card">
-    <h2>Gas 钱包（代付手续费）</h2>
-    <p class="hint">接收代币时，由这个钱包自动给中转地址垫付 gas。一个钱包通用于所有 EVM 链，需在对应链上有少量原生币。只需配置一次。</p>
+    <h2 data-i18n="gasTitle"></h2>
+    <p class="hint" data-i18n="gasHint"></p>
     <div id="gasEmpty">
-      <label>导入私钥
-        <input id="gasPk" type="password" placeholder="0x… 64 位十六进制私钥" spellcheck="false" autocomplete="off">
+      <label><span data-i18n="importKey"></span>
+        <input id="gasPk" type="password" data-i18n-ph="gasPkPh" spellcheck="false" autocomplete="off">
       </label>
       <p id="gasError" class="error" hidden></p>
       <div class="row">
-        <button id="saveGas">保存</button>
-        <button id="genGas" class="ghost">或：生成一个新钱包</button>
+        <button id="saveGas" data-i18n="save"></button>
+        <button id="genGas" class="ghost" data-i18n="genGas"></button>
       </div>
     </div>
     <div id="gasSet" hidden>
       <div class="addr-row">
         <code id="gasAddr"></code>
-        <button id="copyGas">复制</button>
+        <button id="copyGas" data-i18n="copy"></button>
       </div>
-      <p class="hint"><span id="gasBal">余额：—</span>　<button id="refreshGas" class="ghost small">刷新</button></p>
-      <p class="warn">请只放少量 gas 费。私钥未加密保存在本机；该钱包会在链上与每个中转地址产生关联。</p>
+      <p class="hint"><span id="gasBal"></span> <button id="refreshGas" class="ghost small" data-i18n="refresh"></button></p>
+      <p class="warn" data-i18n="gasWarn"></p>
       <div class="row">
-        <button id="revealGas" class="ghost">显示私钥</button>
-        <button id="removeGas" class="ghost danger">删除 Gas 钱包</button>
+        <button id="revealGas" class="ghost"></button>
+        <button id="removeGas" class="ghost danger" data-i18n="removeGas"></button>
       </div>
       <code id="gasPkShow" class="pk" hidden></code>
     </div>
   </section>
 
   <section id="historyBox" class="card" hidden>
-    <h2>历史地址</h2>
-    <p class="hint">重置后旧地址不再监听。如果之后又有资金打到旧地址，点“恢复”即可继续转出。</p>
+    <h2 data-i18n="historyTitle"></h2>
+    <p class="hint" data-i18n="historyHint"></p>
     <ul id="history" class="history"></ul>
-    <button id="clearHistory" class="ghost danger">清空历史（私钥将被删除）</button>
+    <button id="clearHistory" class="ghost danger" data-i18n="clearHistory"></button>
   </section>
 
   <footer>
-    <p>转出期间请保持本页面打开。私钥只保存在本机浏览器的插件存储中，不会上传。</p>
-    <p>注意：链上转账是公开的，中转地址 → B 的这一笔任何人都能在区块浏览器上看到。</p>
+    <p data-i18n="foot1"></p>
+    <p data-i18n="foot2"></p>
   </footer>
 </main>
 <script src="vendor/ethers.umd.min.js"></script>
 <script src="vendor/qrcode.js"></script>
 <script src="chains.js"></script>
+<script src="i18n.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

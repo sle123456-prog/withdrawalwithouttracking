@@ -1,0 +1,5 @@
+{
+  "extName": { "message": "One-Time Relay Wallet (EVM)" },
+  "extDesc": { "message": "Generates a one-time EVM relay address for each withdrawal and forwards received funds to your destination address." },
+  "extAction": { "message": "Open One-Time Relay Wallet" }
+}

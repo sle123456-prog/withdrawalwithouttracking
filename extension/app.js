@@ -1,4 +1,4 @@
-/* global ethers, qrcode, CHAINS, chrome */
+/* global ethers, qrcode, CHAINS, chrome, t, applyI18n, LANG:writable */
 'use strict';
 
 const POLL_MS = 6000;
@@ -52,7 +52,7 @@ async function getProvider(s) {
       const net = await p.getNetwork();
       if (net.chainId !== BigInt(chain.id)) {
         p.destroy();
-        throw new Error(`RPC 的 chainId 是 ${net.chainId}，与所选链 ${chain.name} (${chain.id}) 不符`);
+        throw new Error(t('eChainId', { got: String(net.chainId), chain: chain.name, id: chain.id }));
       }
       provider = p;
       providerKey = key;
@@ -61,7 +61,7 @@ async function getProvider(s) {
       lastErr = e;
     }
   }
-  throw new Error('无法连接 RPC：' + shortErr(lastErr));
+  throw new Error(t('eRpc', { err: shortErr(lastErr) }));
 }
 
 function shortErr(e) {
@@ -73,7 +73,7 @@ function shortErr(e) {
 async function getGasPrice(p) {
   const fd = await p.getFeeData();
   const gp = fd.gasPrice ?? fd.maxFeePerGas;
-  if (!gp) throw new Error('无法获取 gas 价格');
+  if (!gp) throw new Error(t('eGasPrice'));
   return (gp * 120n) / 100n;
 }
 
@@ -138,9 +138,9 @@ async function forwardToken(s, p, wallet, balance) {
   }
   const tx = await wallet.sendTransaction({ to: s.asset, data, gasLimit, gasPrice, type: 0 });
   const rc = await tx.wait(1);
-  if (!rc || rc.status !== 1) throw new Error('代币转账交易失败：' + tx.hash);
+  if (!rc || rc.status !== 1) throw new Error(t('eTokenTx', { hash: tx.hash }));
   const left = await new ethers.Contract(s.asset, ERC20_ABI, p).balanceOf(s.address);
-  if (left >= balance) throw new Error('代币转账后余额未减少，请检查交易：' + tx.hash);
+  if (left >= balance) throw new Error(t('eTokenBal', { hash: tx.hash }));
   return { hash: tx.hash };
 }
 
@@ -182,29 +182,29 @@ async function tick() {
 
     if (s.asset === 'native') {
       if (native > 0n) {
-        setStatus('已收到 ' + fmt(native, 18) + ' ' + chain.symbol + '，正在转出到 B…');
+        setStatus(t('stReceived', { amount: fmt(native, 18), symbol: chain.symbol }));
         const r = await sweepNative(s, p, wallet);
         if (r) {
-          addTx(s, r.hash, '转出 ' + fmt(r.value, 18) + ' ' + chain.symbol + ' → B');
+          addTx(s, r.hash, 'txForward', { amount: fmt(r.value, 18), symbol: chain.symbol });
           s.phase = 'done';
         } else if (s.phase !== 'done') {
-          setStatus('收到的金额太小，不够支付转出手续费。继续等待更多资金到账。', 'warn');
+          setStatus(t('stTooSmall'), 'warn');
         }
       }
     } else if (tokenBal > 0n) {
-      setStatus('已收到 ' + fmt(tokenBal, s.decimals) + ' ' + s.assetSymbol + '，正在转出到 B…');
+      setStatus(t('stReceived', { amount: fmt(tokenBal, s.decimals), symbol: s.assetSymbol }));
       let r = await forwardToken(s, p, wallet, tokenBal);
       delete s.gasShort;
       if (r.needGas && gasWallet) {
-        setStatus('Gas 钱包正在垫付手续费…');
+        setStatus(t('stFunding'));
         const f = await fundGas(s, p, r.needGas);
         if (f.short) {
           s.gasShort = f.short.toString();
         } else {
-          addTx(s, f.hash, 'Gas 钱包垫付 ' + fmt(r.needGas, 18) + ' ' + chain.symbol);
+          addTx(s, f.hash, 'txFund', { amount: fmt(r.needGas, 18), symbol: chain.symbol });
           s.gasFunded = true;
           await saveActive();
-          setStatus('gas 已到位，正在转出 ' + s.assetSymbol + ' 到 B…');
+          setStatus(t('stGasReady', { symbol: s.assetSymbol }));
           r = await forwardToken(s, p, wallet, tokenBal);
         }
       }
@@ -212,13 +212,13 @@ async function tick() {
         s.phase = 'need_gas';
         s.needGas = r.needGas.toString();
       } else {
-        addTx(s, r.hash, '转出 ' + fmt(tokenBal, s.decimals) + ' ' + s.assetSymbol + ' → B');
+        addTx(s, r.hash, 'txForward', { amount: fmt(tokenBal, s.decimals), symbol: s.assetSymbol });
         s.phase = 'done';
         delete s.needGas;
         try { // 剩余的 gas：垫付过则退回 Gas 钱包，否则一并转给 B
           const back = s.gasFunded && gasWallet;
           const r2 = await sweepNative(s, p, wallet, back ? gasWallet.address : s.dest);
-          if (r2) addTx(s, r2.hash, '剩余 ' + fmt(r2.value, 18) + ' ' + chain.symbol + (back ? ' → Gas 钱包' : ' → B'));
+          if (r2) addTx(s, r2.hash, back ? 'txLeftGas' : 'txLeftB', { amount: fmt(r2.value, 18), symbol: chain.symbol });
         } catch (e) { console.warn('sweep leftover failed', e); }
       }
     }
@@ -230,7 +230,7 @@ async function tick() {
         s.asset === 'native' ? 0n : await new ethers.Contract(s.asset, ERC20_ABI, p).balanceOf(s.address));
     }
   } catch (e) {
-    if (s === active) setStatus('出错（将自动重试）：' + shortErr(e), 'err');
+    if (s === active) setStatus(t('stError', { err: shortErr(e) }), 'err');
     provider = null; // 下次换节点重连
   } finally {
     busy = false;
@@ -267,33 +267,30 @@ function setStatus(text, kind) {
 function renderPhase(s) {
   const chain = chainById(s.chainId);
   if (s.phase === 'done') {
-    setStatus('✓ 已完成：资金已转入 B。仍在监听该地址，后续到账也会自动转出；点“重置”可换新地址。', 'ok');
+    setStatus(t('stDone'), 'ok');
   } else if (s.phase === 'need_gas' && s.gasShort && gasWallet) {
-    setStatus(
-      `已收到 ${s.assetSymbol}，但 Gas 钱包在 ${chain.name} 上余额不足。` +
-      `请向 Gas 钱包 ${gasWallet.address} 充值至少 ${fmt(BigInt(s.gasShort), 18)} ${chain.symbol}（建议多充一些供以后使用），到账后自动继续。`,
-      'warn'
-    );
+    setStatus(t('stGasShort', {
+      token: s.assetSymbol, chain: chain.name, addr: gasWallet.address,
+      amount: fmt(BigInt(s.gasShort), 18), symbol: chain.symbol,
+    }), 'warn');
   } else if (s.phase === 'need_gas') {
-    setStatus(
-      `已收到 ${s.assetSymbol}，但中转地址没有 ${chain.symbol} 支付手续费。` +
-      `请再向同一地址转入约 ${fmt(BigInt(s.needGas), 18)} ${chain.symbol}（已含余量），到账后自动转出，剩余 gas 也会转给 B。`,
-      'warn'
-    );
+    setStatus(t('stNeedGas', {
+      token: s.assetSymbol, amount: fmt(BigInt(s.needGas), 18), symbol: chain.symbol,
+    }), 'warn');
   } else {
-    setStatus('等待资金到账…（每 ' + POLL_MS / 1000 + ' 秒检查一次）');
+    setStatus(t('stWaiting', { sec: POLL_MS / 1000 }));
   }
 }
 
 function showBalances(s, native, tokenBal) {
   const chain = chainById(s.chainId);
   let t = fmt(native, 18) + ' ' + chain.symbol;
-  if (s.asset !== 'native') t = fmt(tokenBal, s.decimals) + ' ' + s.assetSymbol + '　|　' + t;
+  if (s.asset !== 'native') t = fmt(tokenBal, s.decimals) + ' ' + s.assetSymbol + '  |  ' + t;
   $('balances').textContent = t;
 }
 
-function addTx(s, hash, label) {
-  s.txs.push({ hash, label });
+function addTx(s, hash, key, vars) {
+  s.txs.push({ hash, key, vars });
   if (s === active) renderTxs(s);
 }
 
@@ -301,14 +298,14 @@ function renderTxs(s) {
   const chain = chainById(s.chainId);
   const ul = $('txs');
   ul.replaceChildren();
-  for (const t of s.txs) {
+  for (const x of s.txs) {
     const li = document.createElement('li');
-    li.append(t.label + '　');
+    li.append((x.key ? t(x.key, x.vars) : x.label) + '  '); // 旧版本记录里只有 label
     const a = document.createElement('a');
-    a.href = chain.explorer + '/tx/' + t.hash;
+    a.href = chain.explorer + '/tx/' + x.hash;
     a.target = '_blank';
     a.rel = 'noreferrer';
-    a.textContent = t.hash.slice(0, 10) + '…' + t.hash.slice(-6);
+    a.textContent = x.hash.slice(0, 10) + '…' + x.hash.slice(-6);
     li.append(a);
     ul.append(li);
   }
@@ -317,9 +314,9 @@ function renderTxs(s) {
 function fillAssets() {
   const chain = chainById($('chain').value);
   const sel = $('asset');
-  sel.replaceChildren(new Option(chain.symbol + '（原生币）', 'native'));
+  sel.replaceChildren(new Option(chain.symbol + t('nativeSuffix'), 'native'));
   for (const [sym, addr] of Object.entries(chain.tokens)) sel.add(new Option(sym, addr));
-  sel.add(new Option('其他代币（填写合约地址）', 'custom'));
+  sel.add(new Option(t('otherToken'), 'custom'));
   $('customTokenRow').hidden = true;
 }
 
@@ -339,15 +336,15 @@ function showSession() {
   $('setup').hidden = true;
   $('session').hidden = false;
   $('chainBadge').textContent = chain.name;
-  $('netName').textContent = chain.name;
+  $('withdrawHint').textContent = t('withdrawHint', { net: chain.name });
   $('address').textContent = s.address;
   $('destShow').textContent = s.dest;
-  $('assetName').textContent = s.assetSymbol + (s.asset === 'native' ? '（原生币）' : '（' + s.asset + '）');
-  $('gasMode').textContent = s.asset === 'native' ? '从到账金额中扣除' : 'Gas 钱包代付';
+  $('assetName').textContent = s.assetSymbol + (s.asset === 'native' ? t('nativeSuffix') : ' (' + s.asset + ')');
+  $('gasMode').textContent = t(s.asset === 'native' ? 'gasModeNative' : 'gasModeWallet');
   $('balances').textContent = '—';
   $('pk').hidden = true;
   $('pk').textContent = '';
-  $('reveal').textContent = '显示私钥';
+  $('reveal').textContent = t('showKey');
   const qr = qrcode(0, 'M');
   qr.addData(s.address);
   qr.make();
@@ -370,10 +367,10 @@ function renderHistory() {
     const meta = document.createElement('div');
     meta.className = 'meta';
     meta.textContent = `${chain.name} · ${h.assetSymbol} · ${new Date(h.createdAt).toLocaleString()} · ` +
-      (h.phase === 'done' ? '已完成' : '未完成') + ` · B: ${h.dest.slice(0, 8)}…${h.dest.slice(-6)}`;
+      t(h.phase === 'done' ? 'done' : 'notDone') + ` · B: ${h.dest.slice(0, 8)}…${h.dest.slice(-6)}`;
     const btn = document.createElement('button');
     btn.className = 'ghost';
-    btn.textContent = '恢复';
+    btn.textContent = t('restore');
     btn.onclick = () => restore(h.id);
     li.append(code, meta, btn);
     ul.append(li);
@@ -407,11 +404,11 @@ async function onStart() {
   err.hidden = true;
   const chain = chainById($('chain').value);
   const destRaw = $('dest').value.trim();
-  if (!ethers.isAddress(destRaw)) return fail('目标地址 B 不是有效的 EVM 地址（请检查是否完整、大小写校验是否正确）。');
+  if (!ethers.isAddress(destRaw)) return fail(t('eDest'));
   const dest = ethers.getAddress(destRaw);
-  if (dest === ethers.ZeroAddress) return fail('目标地址不能是零地址。');
+  if (dest === ethers.ZeroAddress) return fail(t('eZero'));
   const rpc = $('rpc').value.trim();
-  if (rpc && !/^https?:\/\//.test(rpc)) return fail('RPC URL 需以 http(s):// 开头。');
+  if (rpc && !/^https?:\/\//.test(rpc)) return fail(t('eRpcUrl'));
 
   const s = {
     id: Date.now() + '-' + Math.random().toString(36).slice(2, 8),
@@ -425,11 +422,11 @@ async function onStart() {
     let asset = $('asset').value;
     if (asset === 'custom') {
       const raw = $('customToken').value.trim();
-      if (!ethers.isAddress(raw)) return fail('代币合约地址无效。');
+      if (!ethers.isAddress(raw)) return fail(t('eTokenAddr'));
       asset = raw;
     }
     if (asset !== 'native') {
-      if (!gasWallet) return fail('接收代币需要先在下方配置 Gas 钱包（用于代付转出手续费）。');
+      if (!gasWallet) return fail(t('eNeedGasWallet'));
       s.asset = ethers.getAddress(asset);
       provider = null;
       const p = await getProvider(s);
@@ -438,11 +435,11 @@ async function onStart() {
         s.decimals = Number(await c.decimals());
         s.assetSymbol = await c.symbol();
       } catch {
-        return fail(`在 ${chain.name} 上读取不到该代币合约，请确认合约地址和链是否正确。`);
+        return fail(t('eTokenRead', { chain: chain.name }));
       }
     }
     const w = ethers.Wallet.createRandom(); // 全新随机私钥，仅用于本次
-    if (w.address === dest) return fail('目标地址异常。');
+    if (w.address === dest) return fail(t('eDestOdd'));
     s.privateKey = w.privateKey;
     s.address = w.address;
     await archiveActive();
@@ -464,7 +461,8 @@ function renderGas() {
   $('gasPk').value = '';
   $('gasPkShow').hidden = true;
   $('gasPkShow').textContent = '';
-  $('revealGas').textContent = '显示私钥';
+  $('revealGas').textContent = t('showKey');
+  $('gasBal').textContent = t('balanceNone');
   if (gasWallet) {
     $('gasAddr').textContent = gasWallet.address;
     refreshGasBalance();
@@ -476,13 +474,14 @@ async function refreshGasBalance() {
   const ctx = active || { chainId: Number($('chain').value), rpc: $('rpc').value.trim() };
   const chain = chainById(ctx.chainId);
   const el = $('gasBal');
-  el.textContent = `${chain.name} 余额：查询中…`;
+  el.textContent = t('balanceLoading', { chain: chain.name });
   try {
     const p = await getProvider(ctx);
     const bal = await p.getBalance(gasWallet.address);
-    el.textContent = `${chain.name} 余额：${fmt(bal, 18)} ${chain.symbol}` + (bal === 0n ? '（请先充值）' : '');
+    el.textContent = t('balanceValue', { chain: chain.name, amount: fmt(bal, 18), symbol: chain.symbol }) +
+      (bal === 0n ? t('balanceEmpty') : '');
   } catch (e) {
-    el.textContent = `${chain.name} 余额：查询失败（${shortErr(e)}）`;
+    el.textContent = t('balanceFailed', { chain: chain.name, err: shortErr(e) });
   }
 }
 
@@ -500,39 +499,63 @@ async function onSaveGas() {
     if (!/^0x[0-9a-fA-F]{64}$/.test(pk)) throw new Error('bad');
     await setGasWallet(new ethers.Wallet(pk));
   } catch {
-    err.textContent = '私钥格式不对：应为 64 位十六进制（可带 0x 前缀）。';
+    err.textContent = t('ePk');
     err.hidden = false;
   }
 }
 
 async function onReset() {
   if (active && active.phase !== 'done' &&
-      !confirm('当前地址还没有完成转出。重置后将停止监听它（可在“历史地址”里恢复）。确定重置？')) return;
+      !confirm(t('cReset'))) return;
   stopLoop();
   await archiveActive();
   showSetup();
 }
 
 async function init() {
-  for (const c of CHAINS) $('chain').add(new Option(`${c.name}（${c.symbol}）`, c.id));
+  const pref = await store.get('lang');
+  if (pref === 'zh' || pref === 'en') LANG = pref;
+  applyI18n();
+  for (const c of CHAINS) $('chain').add(new Option(`${c.name} (${c.symbol})`, c.id));
   fillAssets();
+  $('lang').onclick = async () => {
+    LANG = LANG === 'zh' ? 'en' : 'zh';
+    await store.set('lang', LANG);
+    applyI18n();
+    // 重新渲染动态文案，保留表单里已选的内容
+    const asset = $('asset').value;
+    fillAssets();
+    $('asset').value = asset;
+    $('customTokenRow').hidden = asset !== 'custom';
+    renderGas();
+    renderHistory();
+    if (active) {
+      const chain = chainById(active.chainId);
+      $('withdrawHint').textContent = t('withdrawHint', { net: chain.name });
+      $('assetName').textContent = active.assetSymbol + (active.asset === 'native' ? t('nativeSuffix') : ' (' + active.asset + ')');
+      $('gasMode').textContent = t(active.asset === 'native' ? 'gasModeNative' : 'gasModeWallet');
+      $('reveal').textContent = t($('pk').hidden ? 'showKey' : 'hideKey');
+      renderTxs(active);
+      renderPhase(active);
+    }
+  };
   $('chain').onchange = () => { fillAssets(); refreshGasBalance(); };
   $('saveGas').onclick = onSaveGas;
   $('genGas').onclick = () => setGasWallet(ethers.Wallet.createRandom());
   $('refreshGas').onclick = refreshGasBalance;
   $('copyGas').onclick = async () => {
     await navigator.clipboard.writeText(gasWallet.address);
-    $('copyGas').textContent = '已复制';
-    setTimeout(() => { $('copyGas').textContent = '复制'; }, 1500);
+    $('copyGas').textContent = t('copied');
+    setTimeout(() => { $('copyGas').textContent = t('copy'); }, 1500);
   };
   $('revealGas').onclick = () => {
     const el = $('gasPkShow');
     el.hidden = !el.hidden;
     el.textContent = el.hidden ? '' : gasWallet.privateKey;
-    $('revealGas').textContent = el.hidden ? '显示私钥' : '隐藏私钥';
+    $('revealGas').textContent = t(el.hidden ? 'showKey' : 'hideKey');
   };
   $('removeGas').onclick = async () => {
-    if (!confirm('删除后私钥将从本机移除。如果钱包里还有余额，请先确认已备份私钥。确定删除？')) return;
+    if (!confirm(t('cRemoveGas'))) return;
     await setGasWallet(null);
   };
   $('asset').onchange = () => { $('customTokenRow').hidden = $('asset').value !== 'custom'; };
@@ -540,17 +563,17 @@ async function init() {
   $('reset').onclick = onReset;
   $('copy').onclick = async () => {
     await navigator.clipboard.writeText(active.address);
-    $('copy').textContent = '已复制';
-    setTimeout(() => { $('copy').textContent = '复制'; }, 1500);
+    $('copy').textContent = t('copied');
+    setTimeout(() => { $('copy').textContent = t('copy'); }, 1500);
   };
   $('reveal').onclick = () => {
     const pk = $('pk');
     pk.hidden = !pk.hidden;
     pk.textContent = pk.hidden ? '' : active.privateKey;
-    $('reveal').textContent = pk.hidden ? '显示私钥' : '隐藏私钥';
+    $('reveal').textContent = t(pk.hidden ? 'showKey' : 'hideKey');
   };
   $('clearHistory').onclick = async () => {
-    if (!confirm('清空后旧地址的私钥将被永久删除，之后打到这些地址的资金无法取回。确定清空？')) return;
+    if (!confirm(t('cClear'))) return;
     history = [];
     await saveHistory();
     renderHistory();
