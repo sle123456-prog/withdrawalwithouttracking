@@ -1,11 +1,13 @@
 # 一次性中转钱包（Chrome 插件）
 
+中文 | [English](README.en.md)
+
 从交易所提币时，为每一次提币生成一个全新的一次性 EVM 地址；资金到账后自动转入你的目标地址 B（同链）。
 
 ## 安装
 
 1. 打开 `chrome://extensions`，右上角开启“开发者模式”
-2. 点“加载已解压的扩展程序”，选择本仓库的 `extension/` 目录
+2. 点“加载已解压的扩展程序”，选择本仓库的 `extension/` 目录（或解压 `dist/` 里的 zip 后得到的 `extension` 文件夹）
 3. 点击工具栏里的插件图标，打开应用页面
 
 ## 使用
@@ -30,7 +32,7 @@
 “使用 Bitget Wallet 免 Gas 转账”选项。勾选后不需要配置 Gas 钱包：
 
 - 中转地址只做离线签名，由 Bitget Wallet 的中继服务代为上链，**手续费从转账的 USDT/USDC 里扣除**，B 实际到账 = 转入金额 − 手续费。
-- 这是 Bitget Wallet 公开的转账接口（`getTransferDataV4` + `send`），不是 App 内“新地址首笔免 Gas”的活动额度——后者只在 Bitget Wallet App 内发放，第三方程序领不到。
+- 这是 Bitget Wallet 公开的转账接口（`getTransferDataV4` + `send`），不是 App 内“新地址首笔免 Gas”的活动额度——目前没有找到可供第三方程序领取该额度的公开接口。
 - 是否能匹配到免 Gas 方案由 Bitget 服务端按链/代币/金额决定，不保证每次可用。不可用时程序每分钟重试；如果配置了 Gas 钱包会自动改用 Gas 钱包，否则提示你手动补 gas。
 - 程序会校验 Bitget 响应的 RSA 签名后才签名；但待签名内容由 Bitget 服务器生成，等于信任 Bitget 的中继。风险范围仅限该中转地址上的这笔资金。
 - 转账请求经过 Bitget 服务器，它能看到中转地址、B 地址和你的 IP。
