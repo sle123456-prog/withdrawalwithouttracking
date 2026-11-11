@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>One-Time Relay Wallet</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<main>
+  <header>
+    <div class="row between">
+      <h1 data-i18n="title"></h1>
+      <button id="lang" class="ghost small" data-i18n="langBtn"></button>
+    </div>
+    <p class="sub" data-i18n="subtitle"></p>
+  </header>
+
+  <!-- Step 1: setup -->
+  <section id="setup" class="card">
+    <label><span data-i18n="chain"></span>
+      <select id="chain"></select>
+    </label>
+    <label><span data-i18n="asset"></span>
+      <select id="asset"></select>
+    </label>
+    <label id="customTokenRow" hidden><span data-i18n="tokenContract"></span>
+      <input id="customToken" placeholder="0x…" spellcheck="false" autocomplete="off">
+    </label>
+    <label><span data-i18n="dest"></span>
+      <input id="dest" placeholder="0x…" spellcheck="false" autocomplete="off">
+    </label>
+    <details>
+      <summary data-i18n="advanced"></summary>
+      <label><span data-i18n="rpcLabel"></span>
+        <input id="rpc" placeholder="https://…" spellcheck="false" autocomplete="off">
+      </label>
+    </details>
+    <p id="setupError" class="error" hidden></p>
+    <button id="start" class="primary" data-i18n="start"></button>
+  </section>
+
+  <!-- Step 2: receive and forward -->
+  <section id="session" class="card" hidden>
+    <div class="row between">
+      <span id="chainBadge" class="badge"></span>
+      <button id="reset" class="ghost" data-i18n="reset"></button>
+    </div>
+
+    <p class="hint" id="withdrawHint"></p>
+    <div id="qr"></div>
+    <div class="addr-row">
+      <code id="address"></code>
+      <button id="copy" data-i18n="copy"></button>
+    </div>
+
+    <div id="status" class="status"></div>
+
+    <dl class="facts">
+      <dt data-i18n="factAsset"></dt><dd id="assetName"></dd>
+      <dt data-i18n="factGas"></dt><dd id="gasMode"></dd>
+      <dt data-i18n="factDest"></dt><dd><code id="destShow"></code></dd>
+      <dt data-i18n="factBalance"></dt><dd id="balances">—</dd>
+    </dl>
+
+    <ul id="txs" class="txs"></ul>
+
+    <details>
+      <summary data-i18n="backupKey"></summary>
+      <p class="warn" data-i18n="keyWarn"></p>
+      <button id="reveal" class="ghost"></button>
+      <code id="pk" class="pk" hidden></code>
+    </details>
+  </section>
+
+  <section id="gasBox" class="card">
+    <h2 data-i18n="gasTitle"></h2>
+    <p class="hint" data-i18n="gasHint"></p>
+    <div id="gasEmpty">
+      <label><span data-i18n="importKey"></span>
+        <input id="gasPk" type="password" data-i18n-ph="gasPkPh" spellcheck="false" autocomplete="off">
+      </label>
+      <p id="gasError" class="error" hidden></p>
+      <div class="row">
+        <button id="saveGas" data-i18n="save"></button>
+        <button id="genGas" class="ghost" data-i18n="genGas"></button>
+      </div>
+    </div>
+    <div id="gasSet" hidden>
+      <div class="addr-row">
+        <code id="gasAddr"></code>
+        <button id="copyGas" data-i18n="copy"></button>
+      </div>
+      <p class="hint"><span id="gasBal"></span> <button id="refreshGas" class="ghost small" data-i18n="refresh"></button></p>
+      <p class="warn" data-i18n="gasWarn"></p>
+      <div class="row">
+        <button id="revealGas" class="ghost"></button>
+        <button id="removeGas" class="ghost danger" data-i18n="removeGas"></button>
+      </div>
+      <code id="gasPkShow" class="pk" hidden></code>
+    </div>
+  </section>
+
+  <section id="historyBox" class="card" hidden>
+    <h2 data-i18n="historyTitle"></h2>
+    <p class="hint" data-i18n="historyHint"></p>
+    <ul id="history" class="history"></ul>
+    <button id="clearHistory" class="ghost danger" data-i18n="clearHistory"></button>
+  </section>
+
+  <footer>
+    <p data-i18n="foot1"></p>
+    <p data-i18n="foot2"></p>
+  </footer>
+</main>
+<script src="vendor/ethers.umd.min.js"></script>
+<script src="vendor/qrcode.js"></script>
+<script src="chains.js"></script>
+<script src="i18n.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
