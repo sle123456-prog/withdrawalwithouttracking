@@ -58,3 +58,35 @@ p.warn { color: var(--warn); font-size: 13px; }
 [hidden] { display: none !important; }
 button.small { padding: 2px 10px; font-size: 13px; }
 #gasAddr { flex: 1; padding: 10px 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; }
+.mix-option { margin-bottom: 16px; padding: 12px; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; font-size: 13px; }
+.mix-toggle { display: flex; align-items: center; gap: 10px; margin: 0;
+  color: var(--text); cursor: pointer; font-weight: 600; }
+.mix-toggle input { appearance: none; display: block; flex: 0 0 36px; width: 36px; height: 22px;
+  margin: 0; padding: 2px; border-radius: 999px; border: 1px solid var(--muted);
+  background: var(--card); cursor: pointer; }
+.mix-toggle input::before { content: ''; display: block; width: 16px; height: 16px;
+  border-radius: 50%; background: var(--muted); transition: transform .15s ease; }
+.mix-toggle input:checked { background: var(--accent); border-color: var(--accent); }
+.mix-toggle input:checked::before { background: #fff; transform: translateX(14px); }
+.mix-toggle input:disabled { opacity: .6; cursor: wait; }
+.mix-option p { margin: 8px 0 4px; }
+.small-note { font-size: 13px; }
+.mix-progress { margin: 16px 0; padding-top: 16px; border-top: 1px solid var(--line); }
+.mix-progress h2 { margin-bottom: 12px; }
+.mix-steps { list-style: none; counter-reset: mix-step; margin: 0 0 16px; padding: 0; }
+.mix-steps li { counter-increment: mix-step; display: flex; align-items: flex-start;
+  gap: 10px; padding: 5px 0; color: var(--muted); font-size: 13px; }
+.mix-steps li::before { content: counter(mix-step); display: inline-flex; align-items: center;
+  justify-content: center; flex: 0 0 22px; width: 22px; height: 22px;
+  border: 1px solid var(--line); border-radius: 50%; font-size: 12px; }
+.mix-steps li.active, .mix-steps li[aria-current="step"] { color: var(--accent); font-weight: 600; }
+.mix-steps li.active::before, .mix-steps li[aria-current="step"]::before { border-color: var(--accent); }
+.mix-steps li.done { color: var(--ok); }
+.mix-steps li.done::before { content: '✓'; border-color: var(--ok); }
+.mix-steps li.error { color: var(--err); }
+.mix-steps li.error::before { border-color: var(--err); }
+.mix-backup { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) {
+  .mix-toggle input::before { transition: none; }
+}

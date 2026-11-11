@@ -1,4 +1,5 @@
-/* global ethers, qrcode, CHAINS, chrome, t, applyI18n, LANG:writable */
+/* global ethers, qrcode, CHAINS, chrome, t, applyI18n, LANG:writable,
+ TornadoPools, TornadoCrypto, TornadoRelayer, TornadoFlow, TornadoAdapter */
 'use strict';
 
 const POLL_MS = 6000;
@@ -35,6 +36,8 @@ let timer = null;
 let busy = false;
 let provider = null;
 let providerKey = '';
+let loopEpoch = 0;
+let mainnetProvider = null;
 
 const saveActive = () => store.set('active', active);
 const saveHistory = () => store.set('history', history);
@@ -164,7 +167,7 @@ async function fundGas(s, p, amount) {
 }
 
 // ---------- 主循环 ----------
-async function tick() {
+async function tickUnlocked() {
   if (!active || busy) return;
   busy = true;
   const s = active;
@@ -179,6 +182,36 @@ async function tick() {
     }
     if (s !== active) return;
     showBalances(s, native, tokenBal);
+
+    if (s.mode === 'tornado') {
+      if (s.mix) s.mix.actualRemainderWei = (s.asset === 'native' ? native : tokenBal).toString();
+      if (!mainnetProvider) {
+        mainnetProvider = s.chainId === 1 ? p : new ethers.FallbackProvider(
+          chainById(1).rpcs.map((url) => new ethers.JsonRpcProvider(url, 1, { batchMaxCount: 1 })), 1);
+      }
+      const save = async () => {
+        if (active !== s) throw new Error(t('mixSessionChanged'));
+        await store.set('active', s);
+        renderMix(s);
+      };
+      const adapter = TornadoAdapter.create({ session: s, provider: p, mainnetProvider,
+        storage: store, save, gasWallet, getGasPrice, l1Fee, chain,
+        onProgress: (key) => { if (s === active) setStatus(t(key)); },
+        onTx: (hash, key) => {
+          if (!s.txs.some((x) => x.hash === hash)) addTx(s, hash, key || 'mixTx');
+        },
+      });
+      await TornadoFlow.tick(s, adapter);
+      if (s.mix && s.mix.phase === 'done') s.phase = 'done';
+      await save();
+      $('mixSecondBalance').textContent = fmt(await adapter.secondBalance(s), s.decimals) + ' ' + s.assetSymbol;
+      const remaining = s.asset === 'native' ? await p.getBalance(s.address) :
+        await new ethers.Contract(s.asset, ERC20_ABI, p).balanceOf(s.address);
+      s.mix.actualRemainderWei = remaining.toString();
+      $('mixRemainder').textContent = fmt(remaining, s.decimals) + ' ' + s.assetSymbol;
+      renderPhase(s);
+      return;
+    }
 
     if (s.asset === 'native') {
       if (native > 0n) {
@@ -230,22 +263,37 @@ async function tick() {
         s.asset === 'native' ? 0n : await new ethers.Contract(s.asset, ERC20_ABI, p).balanceOf(s.address));
     }
   } catch (e) {
-    if (s === active) setStatus(t('stError', { err: shortErr(e) }), 'err');
+    if (s === active) {
+      if (s.mode === 'tornado' && s.mix?.error) renderPhase(s);
+      else setStatus(t('stError', { err: shortErr(e) }), 'err');
+    }
     provider = null; // 下次换节点重连
   } finally {
     busy = false;
   }
 }
 
+async function tick() {
+  if (navigator.locks) {
+    return navigator.locks.request('relay-wallet-send', { ifAvailable: true }, async (lock) => {
+      if (lock) await tickUnlocked();
+    });
+  }
+  return tickUnlocked();
+}
+
 function startLoop() {
   stopLoop();
+  const epoch = loopEpoch;
   const run = async () => {
+    if (epoch !== loopEpoch) return;
     await tick();
-    timer = setTimeout(run, POLL_MS);
+    if (epoch === loopEpoch) timer = setTimeout(run, POLL_MS);
   };
   run();
 }
 function stopLoop() {
+  loopEpoch++;
   clearTimeout(timer);
   timer = null;
 }
@@ -265,6 +313,15 @@ function setStatus(text, kind) {
 }
 
 function renderPhase(s) {
+  if (s.mode === 'tornado') {
+    renderMix(s);
+    if (s.mix && s.mix.error) return setStatus(t('mixPaused', { err: t(s.mix.error.message || s.mix.error) }), 'warn');
+    const phase = s.mix ? s.mix.phase : 'waiting';
+    const keys = { waiting: 'mixWaiting', depositing: 'mixDepositing', withdrawing: 'mixWithdrawing',
+      collecting: 'mixCollecting', finalizing: 'mixForwarding', done: 'mixDone',
+      preparing: 'mixPreparing', planned: 'mixDepositing', insufficient: 'mixTooSmall' };
+    return setStatus(t(keys[phase] || 'mixWorking'), phase === 'done' ? 'ok' : undefined);
+  }
   const chain = chainById(s.chainId);
   if (s.phase === 'done') {
     setStatus(t('stDone'), 'ok');
@@ -280,6 +337,30 @@ function renderPhase(s) {
   } else {
     setStatus(t('stWaiting', { sec: POLL_MS / 1000 }));
   }
+}
+
+function renderMix(s) {
+  const enabled = s && s.mode === 'tornado';
+  $('mixProgress').hidden = !enabled;
+  if (!enabled) return;
+  const m = s.mix || {};
+  $('mixSecondAddress').textContent = s.secondWallet.address;
+  $('mixCounts').textContent = t('mixCountsValue', { done: m.counts?.withdrawn || 0, total: m.counts?.total || 0 });
+  const remainder = m.actualRemainderWei ?? m.remainingWei;
+  if (remainder != null) $('mixRemainder').textContent = fmt(BigInt(remainder), s.decimals) + ' ' + s.assetSymbol;
+  const phase = m.phase || 'waiting';
+  const done = phase === 'done';
+  const step = done ? 5 : ({ waiting: 0, insufficient: 0, preparing: 1, planned: 1,
+    depositing: 1, withdrawing: 2, collecting: 3, finalizing: 4 })[phase] ?? 1;
+  const list = $('mixSteps');
+  list.replaceChildren();
+  ['mixStepReceived', 'mixStepDepositing', 'mixStepWithdrawing', 'mixStepCollecting', 'mixStepForwarding'].forEach((key, i) => {
+    const li = document.createElement('li');
+    li.textContent = t(key);
+    li.className = i < step ? 'done' : i === step ? 'active' : '';
+    if (i === step) li.setAttribute('aria-current', 'step');
+    list.append(li);
+  });
 }
 
 function showBalances(s, native, tokenBal) {
@@ -318,6 +399,14 @@ function fillAssets() {
   for (const [sym, addr] of Object.entries(chain.tokens)) sel.add(new Option(sym, addr));
   sel.add(new Option(t('otherToken'), 'custom'));
   $('customTokenRow').hidden = true;
+  updateMixAvailability();
+}
+
+function updateMixAvailability() {
+  const enabled = $('mixMode').checked;
+  const chosen = $('asset').value === 'custom' ? $('customToken').value.trim() : $('asset').value;
+  const pools = TornadoPools.getPools(Number($('chain').value), chosen);
+  $('mixModeHint').textContent = enabled && !pools.length ? t('mixUnsupported') : t('mixModeHint');
 }
 
 function showSetup() {
@@ -345,6 +434,10 @@ function showSession() {
   $('pk').hidden = true;
   $('pk').textContent = '';
   $('reveal').textContent = t('showKey');
+  $('mixBackupText').hidden = true;
+  $('mixBackupText').textContent = '';
+  $('mixSecondBalance').textContent = '—';
+  renderMix(s);
   const qr = qrcode(0, 'M');
   qr.addData(s.address);
   qr.make();
@@ -387,6 +480,7 @@ async function archiveActive() {
 }
 
 async function restore(id) {
+  if (busy) return setStatus(t('mixBusy'), 'warn');
   const h = history.find((x) => x.id === id);
   if (!h) return;
   stopLoop();
@@ -399,6 +493,7 @@ async function restore(id) {
 }
 
 async function onStart() {
+  if (busy) return;
   const err = $('setupError');
   const fail = (m) => { err.textContent = m; err.hidden = false; };
   err.hidden = true;
@@ -437,6 +532,22 @@ async function onStart() {
       } catch {
         return fail(t('eTokenRead', { chain: chain.name }));
       }
+    }
+    if ($('mixMode').checked) {
+      if (!TornadoPools.getPools(chain.id, s.asset).length) return fail(t('mixUnsupported'));
+      const relayer = $('mixRelayer').value.trim();
+      if (relayer) {
+        const url = new URL(relayer);
+        if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) {
+          return fail(t('mixBadRelayer'));
+        }
+        if (url.username || url.password || url.search || url.hash) return fail(t('mixBadRelayer'));
+      }
+      await TornadoCrypto.ready();
+      s.mode = 'tornado';
+      s.relayerUrl = relayer;
+      const second = ethers.Wallet.createRandom();
+      s.secondWallet = { address: second.address, privateKey: second.privateKey };
     }
     const w = ethers.Wallet.createRandom(); // 全新随机私钥，仅用于本次
     if (w.address === dest) return fail(t('eDestOdd'));
@@ -505,6 +616,7 @@ async function onSaveGas() {
 }
 
 async function onReset() {
+  if (busy) return setStatus(t('mixBusy'), 'warn');
   if (active && active.phase !== 'done' &&
       !confirm(t('cReset'))) return;
   stopLoop();
@@ -518,6 +630,19 @@ async function init() {
   applyI18n();
   for (const c of CHAINS) $('chain').add(new Option(`${c.name} (${c.symbol})`, c.id));
   fillAssets();
+  $('mixMode').onchange = updateMixAvailability;
+  $('customToken').oninput = updateMixAvailability;
+  $('mixBackup').onclick = () => {
+    if (!active || active.mode !== 'tornado') return;
+    const backup = { format: 'relay-wallet-tornado-backup-v1', exportedAt: new Date().toISOString(), session: active };
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'relay-wallet-backup-' + active.id + '.json';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  };
   $('lang').onclick = async () => {
     LANG = LANG === 'zh' ? 'en' : 'zh';
     await store.set('lang', LANG);
@@ -527,6 +652,7 @@ async function init() {
     fillAssets();
     $('asset').value = asset;
     $('customTokenRow').hidden = asset !== 'custom';
+    updateMixAvailability();
     renderGas();
     renderHistory();
     if (active) {
@@ -558,7 +684,7 @@ async function init() {
     if (!confirm(t('cRemoveGas'))) return;
     await setGasWallet(null);
   };
-  $('asset').onchange = () => { $('customTokenRow').hidden = $('asset').value !== 'custom'; };
+  $('asset').onchange = () => { $('customTokenRow').hidden = $('asset').value !== 'custom'; updateMixAvailability(); };
   $('start').onclick = onStart;
   $('reset').onclick = onReset;
   $('copy').onclick = async () => {
@@ -588,4 +714,25 @@ async function init() {
   renderGas();
 }
 
-init();
+async function boot() {
+  applyI18n();
+  // Hold ownership for the entire page lifetime. Serializing only individual
+  // ticks would let a second page write a stale copy of the private journal.
+  if (!navigator.locks) throw new Error(t('mixLockUnavailable'));
+  await navigator.locks.request('relay-wallet-page-owner', { ifAvailable: true }, async (lock) => {
+    if (!lock) {
+      $('setupError').hidden = false;
+      $('setupError').textContent = t('mixOtherPage');
+      for (const el of document.querySelectorAll('button,input,select')) el.disabled = true;
+      return;
+    }
+    await init();
+    await new Promise(() => {}); // The browser releases the lock on page close.
+  });
+}
+
+boot().catch((error) => {
+  $('setupError').textContent = shortErr(error);
+  $('setupError').hidden = false;
+  $('start').disabled = true;
+});

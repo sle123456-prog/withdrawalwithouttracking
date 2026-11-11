@@ -1,1 +1,9 @@
 node_modules/
+work/
+extension/vendor/tornado/crypto.js
+extension/vendor/tornado/crypto.js.LEGAL.txt
+extension/vendor/tornado/groth16-worker.js
+extension/vendor/tornado/tornado.json
+extension/vendor/tornado/tornadoProvingKey.bin
+extension/vendor/tornado/*.zip
+extension/vendor/tornado/provenance.json

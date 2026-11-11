@@ -30,11 +30,23 @@
     <label><span data-i18n="dest"></span>
       <input id="dest" placeholder="0x…" spellcheck="false" autocomplete="off">
     </label>
+    <div class="mix-option">
+      <label class="mix-toggle" for="mixMode">
+        <input id="mixMode" type="checkbox" role="switch" aria-describedby="mixModeHint">
+        <span data-i18n="mixMode"></span>
+      </label>
+      <p id="mixModeHint" class="hint" data-i18n="mixModeHint"></p>
+      <a href="https://tornadocash.eth.limo/" target="_blank" rel="noopener noreferrer" data-i18n="mixWebsite"></a>
+    </div>
     <details>
       <summary data-i18n="advanced"></summary>
       <label><span data-i18n="rpcLabel"></span>
         <input id="rpc" placeholder="https://…" spellcheck="false" autocomplete="off">
       </label>
+      <label><span data-i18n="mixRelayerLabel"></span>
+        <input id="mixRelayer" type="url" placeholder="https://…" spellcheck="false" autocomplete="off">
+      </label>
+      <p class="hint small-note" data-i18n="mixRelayerHint"></p>
     </details>
     <p id="setupError" class="error" hidden></p>
     <button id="start" class="primary" data-i18n="start"></button>
@@ -62,6 +74,24 @@
       <dt data-i18n="factDest"></dt><dd><code id="destShow"></code></dd>
       <dt data-i18n="factBalance"></dt><dd id="balances">—</dd>
     </dl>
+
+    <section id="mixProgress" class="mix-progress" aria-labelledby="mixProgressTitle" hidden>
+      <h2 id="mixProgressTitle" data-i18n="mixProgressTitle"></h2>
+      <ol id="mixSteps" class="mix-steps" aria-live="polite"></ol>
+      <dl class="facts">
+        <dt data-i18n="mixSecondAddressLabel"></dt><dd><code id="mixSecondAddress">—</code></dd>
+        <dt data-i18n="mixSecondBalanceLabel"></dt><dd id="mixSecondBalance">—</dd>
+        <dt data-i18n="mixRemainderLabel"></dt><dd id="mixRemainder">—</dd>
+        <dt data-i18n="mixCountsLabel"></dt><dd id="mixCounts">—</dd>
+      </dl>
+      <p class="hint small-note" data-i18n="mixFundsHint"></p>
+      <details>
+        <summary data-i18n="mixBackupTitle"></summary>
+        <p class="warn" data-i18n="mixBackupHint"></p>
+        <button id="mixBackup" class="ghost" data-i18n="mixBackup"></button>
+        <code id="mixBackupText" class="pk mix-backup" hidden></code>
+      </details>
+    </section>
 
     <ul id="txs" class="txs"></ul>
 
@@ -117,6 +147,11 @@
 <script src="vendor/qrcode.js"></script>
 <script src="chains.js"></script>
 <script src="i18n.js"></script>
+<script src="tornado-pools.js"></script>
+<script src="vendor/tornado/crypto.js"></script>
+<script src="tornado-relayer.js"></script>
+<script src="tornado-flow.js"></script>
+<script src="tornado-adapter.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

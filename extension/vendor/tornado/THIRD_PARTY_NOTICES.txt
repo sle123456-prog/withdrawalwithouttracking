@@ -1,0 +1,24 @@
+Tornado Cash Classic proof components
+
+The bundled prover is built locally from the exact dependencies in package-lock.json.
+It is based on Tornado Cash Classic UI's MIT-licensed integration and GPL-licensed
+snarkjs/websnark proof implementations. Original license texts accompany this file.
+
+Tornado Classic UI / circuit assets:
+https://github.com/tornadocash/tornado-classic-ui/tree/a83fae0772c8da084c0e76b3a756b456f5b9f5bb
+
+websnark (GPL-3.0-or-later):
+https://github.com/tornadocash/websnark/tree/4c0af6a8b65aabea3c09f377f63c44e7a58afa6d
+
+snarkjs (GPL-3.0-or-later):
+https://github.com/tornadocash/snarkjs/tree/869181cfaf7526fe8972073d31655493a04326d5
+
+MV3 compatibility changes in scripts/build-tornado.mjs:
+- Legacy witness templates/functions are compiled into static JavaScript at build time.
+- Browser proof workers are shipped as a separate local JavaScript file.
+- Browser proof worker concurrency is limited to two to bound memory consumption.
+
+No runtime JavaScript is fetched from Tornado Cash, relayers, RPC providers, or CDNs.
+Circuit JSON and the proving key are packaged data, not executable downloads.
+Archive identities and the SHA-256 of unpacked assets are recorded in provenance.json.
+Rebuild with npm ci --ignore-scripts followed by npm run build.

@@ -16,10 +16,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - run: npm test
 
       - name: Resolve tag from manifest version
         run: |
-          version=$(python3 -c "import json; print(json.load(open('extension/manifest.json'))['version'])")
+          version=$(python3 -c "import json; m=json.load(open('extension/manifest.json')); print(m.get('version_name', m['version']))")
           if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "v$version" != "$GITHUB_REF_NAME" ]; then
             echo "Tag $GITHUB_REF_NAME does not match manifest version $version" >&2
             exit 1
@@ -47,5 +54,7 @@ jobs:
           See [README](https://github.com/${{ github.repository }}/blob/${{ env.TAG }}/README.en.md) ([中文](https://github.com/${{ github.repository }}/blob/${{ env.TAG }}/README.md)) for usage, gas handling and limitations. Test with a small amount first.
           NOTES
           sed -i 's/^          //' notes.md
+          extra=()
+          if [[ "$TAG" == *-* ]]; then extra+=(--prerelease); fi
           gh release create "$TAG" "relay-wallet-extension-$TAG.zip" \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$TAG" --notes-file notes.md
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$TAG" --notes-file notes.md "${extra[@]}"

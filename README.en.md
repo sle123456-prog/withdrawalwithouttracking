@@ -6,6 +6,32 @@ When you withdraw from an exchange, this extension generates a brand-new, single
 
 The interface is available in English and Chinese. It follows your browser language by default, and the button at the top right switches between them.
 
+## 2.0beta: Tornado Cash mode
+
+Enable the mode before generating an address. The existing chain, asset, destination and address-copying steps stay the same. A second fresh wallet receives this batch's Tornado withdrawals:
+
+`Exchange → first wallet → Tornado Classic pools → second wallet → B`
+
+The extension freezes the first eligible balance into a batch of fixed-denomination deposits (up to 100 notes). Unmixable change, unused fee reserves and later deposits stay in the first wallet, with its actual balance shown. Every withdrawal must have 12 canonical block confirmations and its recipient, note nullifier and net receipt checked. Only after all withdrawals arrive does the second wallet forward the selected asset to B, less fees.
+
+Supported deployments are native-coin pools on Ethereum, BNB Smart Chain, Polygon, Arbitrum, Optimism, Avalanche and Gnosis, plus DAI, USDC and USDT pools on Ethereum. Unsupported combinations are rejected before an address is generated. ETH pools start at 0.1 ETH plus gas; USDC/USDT pools use 100 or 1,000 tokens. Healthy registered relayers are discovered automatically; an optional custom URL is available in Advanced. Unavailable relayers, excessive fees, incomplete RPC synchronization or insufficient gas pause processing without bypassing the pool. Initial historical synchronization can take time.
+
+The progress view shows deposits, withdrawals, collection and forwarding. Notes and signed transactions are saved before broadcasting; reopening resumes the saved journal. Only one page can operate the wallet at a time. Export the full backup to retain both private keys and all notes. Proofs are generated locally; relayers receive only the proof and public transaction arguments. The website link is a reference entry point and receives no keys or notes. Timing, amount combinations and the final transfer can still provide correlation clues.
+
+### Build the beta
+
+With Node.js 20 or later, run:
+
+```sh
+npm ci --ignore-scripts
+npm run build
+npm test
+```
+
+The build downloads pinned upstream circuit archives, verifies their Git blob SHA values, and generates the local prover, static worker and circuit files. The extension executes no remote JavaScript. Load `extension/` after building, or use a built release ZIP. Run `npm run test:browser` for the browser smoke checks. When updating, overwrite the files and reload the extension; do not uninstall it.
+
+Sources: [pinned upstream UI/configuration](https://github.com/tornadocash/tornado-classic-ui/tree/a83fae0772c8da084c0e76b3a756b456f5b9f5bb), [Classic contracts](https://github.com/tornadocash/tornado-core).
+
 ## Install
 
 1. Open `chrome://extensions` and turn on **Developer mode** (top right).
