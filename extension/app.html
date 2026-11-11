@@ -69,6 +69,34 @@
     </details>
   </section>
 
+  <section id="gasBox" class="card">
+    <h2>Gas 钱包（代付手续费）</h2>
+    <p class="hint">接收代币时，由这个钱包自动给中转地址垫付 gas。一个钱包通用于所有 EVM 链，需在对应链上有少量原生币。只需配置一次。</p>
+    <div id="gasEmpty">
+      <label>导入私钥
+        <input id="gasPk" type="password" placeholder="0x… 64 位十六进制私钥" spellcheck="false" autocomplete="off">
+      </label>
+      <p id="gasError" class="error" hidden></p>
+      <div class="row">
+        <button id="saveGas">保存</button>
+        <button id="genGas" class="ghost">或：生成一个新钱包</button>
+      </div>
+    </div>
+    <div id="gasSet" hidden>
+      <div class="addr-row">
+        <code id="gasAddr"></code>
+        <button id="copyGas">复制</button>
+      </div>
+      <p class="hint"><span id="gasBal">余额：—</span>　<button id="refreshGas" class="ghost small">刷新</button></p>
+      <p class="warn">请只放少量 gas 费。私钥未加密保存在本机；该钱包会在链上与每个中转地址产生关联。</p>
+      <div class="row">
+        <button id="revealGas" class="ghost">显示私钥</button>
+        <button id="removeGas" class="ghost danger">删除 Gas 钱包</button>
+      </div>
+      <code id="gasPkShow" class="pk" hidden></code>
+    </div>
+  </section>
+
   <section id="historyBox" class="card" hidden>
     <h2>历史地址</h2>
     <p class="hint">重置后旧地址不再监听。如果之后又有资金打到旧地址，点“恢复”即可继续转出。</p>
