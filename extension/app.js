@@ -402,11 +402,19 @@ function fillAssets() {
   updateMixAvailability();
 }
 
+function canUseMix(chainId, asset) {
+  const chain = chainById(chainId);
+  return asset === 'native' && chain?.symbol === 'ETH' &&
+    TornadoPools.getPools(chainId, 'native').some((pool) => pool.currency === 'eth');
+}
+
 function updateMixAvailability() {
-  const enabled = $('mixMode').checked;
-  const chosen = $('asset').value === 'custom' ? $('customToken').value.trim() : $('asset').value;
-  const pools = TornadoPools.getPools(Number($('chain').value), chosen);
-  $('mixModeHint').textContent = enabled && !pools.length ? t('mixUnsupported') : t('mixModeHint');
+  const available = canUseMix(Number($('chain').value), $('asset').value);
+  $('mixOption').hidden = !available;
+  $('mixRelayerOptions').hidden = !available;
+  $('mixMode').disabled = !available;
+  if (!available) $('mixMode').checked = false;
+  $('mixModeHint').textContent = t('mixModeHint');
 }
 
 function showSetup() {
@@ -534,7 +542,7 @@ async function onStart() {
       }
     }
     if ($('mixMode').checked) {
-      if (!TornadoPools.getPools(chain.id, s.asset).length) return fail(t('mixUnsupported'));
+      if (!canUseMix(chain.id, s.asset)) return fail(t('mixUnsupported'));
       const relayer = $('mixRelayer').value.trim();
       if (relayer) {
         const url = new URL(relayer);

@@ -47,8 +47,24 @@ try {
   await page.goto(appUrl);
   await page.locator('#chain option').first().waitFor({ state: 'attached' });
   assert.equal(await page.locator('#mixMode').isChecked(), false);
+  assert.equal(await page.locator('#mixMode').isVisible(), true);
   await page.locator('#mixMode').check();
+  await page.locator('#asset').selectOption('0xdac17f958d2ee523a2206206994597c13d831ec7');
+  assert.equal(await page.locator('#mixMode').isVisible(), false);
+  assert.equal(await page.locator('#mixMode').isChecked(), false);
+  assert.equal(await page.locator('#mixMode').isDisabled(), true);
+  await page.locator('#asset').selectOption('native');
+  assert.equal(await page.locator('#mixMode').isVisible(), true);
+  assert.equal(await page.locator('#mixMode').isChecked(), false);
+  for (const chainId of ['1', '56', '137', '42161', '10', '8453', '43114', '59144', '324', '534352', '5000', '100']) {
+    await page.locator('#chain').selectOption(chainId);
+    const supportedEth = ['1', '10', '42161'].includes(chainId);
+    assert.equal(await page.locator('#mixMode').isVisible(), supportedEth, 'Mode visibility on chain ' + chainId);
+    assert.equal(await page.locator('#mixRelayerOptions').evaluate((el) => !el.hidden), supportedEth);
+  }
   await page.locator('#chain').selectOption('8453');
+  // The action also validates eligibility if a stale or modified checkbox is set.
+  await page.evaluate(() => { document.getElementById('mixMode').checked = true; });
   await page.locator('#dest').fill('0x1111111111111111111111111111111111111111');
   await page.locator('#start').click();
   await page.locator('#setupError').waitFor({ state: 'visible' });
@@ -56,6 +72,8 @@ try {
   assert.equal(await page.evaluate(async () => (await chrome.storage.local.get('active')).active), undefined);
 
   await page.locator('#chain').selectOption('1');
+  assert.equal(await page.locator('#mixMode').isChecked(), false);
+  await page.locator('#mixMode').check();
   await page.locator('#start').click();
   await page.locator('#session').waitFor({ state: 'visible', timeout: 60000 });
   const stored = await page.evaluate(async () => (await chrome.storage.local.get('active')).active);

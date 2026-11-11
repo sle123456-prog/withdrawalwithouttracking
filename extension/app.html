@@ -30,9 +30,9 @@
     <label><span data-i18n="dest"></span>
       <input id="dest" placeholder="0x…" spellcheck="false" autocomplete="off">
     </label>
-    <div class="mix-option">
+    <div id="mixOption" class="mix-option" hidden>
       <label class="mix-toggle" for="mixMode">
-        <input id="mixMode" type="checkbox" role="switch" aria-describedby="mixModeHint">
+        <input id="mixMode" type="checkbox" role="switch" aria-describedby="mixModeHint" disabled>
         <span data-i18n="mixMode"></span>
       </label>
       <p id="mixModeHint" class="hint" data-i18n="mixModeHint"></p>
@@ -43,10 +43,12 @@
       <label><span data-i18n="rpcLabel"></span>
         <input id="rpc" placeholder="https://…" spellcheck="false" autocomplete="off">
       </label>
-      <label><span data-i18n="mixRelayerLabel"></span>
-        <input id="mixRelayer" type="url" placeholder="https://…" spellcheck="false" autocomplete="off">
-      </label>
-      <p class="hint small-note" data-i18n="mixRelayerHint"></p>
+      <div id="mixRelayerOptions" hidden>
+        <label><span data-i18n="mixRelayerLabel"></span>
+          <input id="mixRelayer" type="url" placeholder="https://…" spellcheck="false" autocomplete="off">
+        </label>
+        <p class="hint small-note" data-i18n="mixRelayerHint"></p>
+      </div>
     </details>
     <p id="setupError" class="error" hidden></p>
     <button id="start" class="primary" data-i18n="start"></button>

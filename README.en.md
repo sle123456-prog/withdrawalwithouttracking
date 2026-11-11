@@ -8,13 +8,13 @@ The interface is available in English and Chinese. It follows your browser langu
 
 ## 2.0beta: Tornado Cash mode
 
-Enable the mode before generating an address. The existing chain, asset, destination and address-copying steps stay the same. A second fresh wallet receives this batch's Tornado withdrawals:
+The mode switch appears only when the selected asset is native **ETH** and the chain has a supported Tornado Cash pool: Ethereum, Arbitrum or Optimism. Selecting another asset or chain turns the mode off and hides the switch. Enable it before generating an address. The destination and address-copying steps stay the same. A second fresh wallet receives this batch's Tornado withdrawals:
 
 `Exchange → first wallet → Tornado Classic pools → second wallet → B`
 
 The extension freezes the first eligible balance into a batch of fixed-denomination deposits (up to 100 notes). Unmixable change, unused fee reserves and later deposits stay in the first wallet, with its actual balance shown. Every withdrawal must have 12 canonical block confirmations and its recipient, note nullifier and net receipt checked. Only after all withdrawals arrive does the second wallet forward the selected asset to B, less fees.
 
-Supported deployments are native-coin pools on Ethereum, BNB Smart Chain, Polygon, Arbitrum, Optimism, Avalanche and Gnosis, plus DAI, USDC and USDT pools on Ethereum. Unsupported combinations are rejected before an address is generated. ETH pools start at 0.1 ETH plus gas; USDC/USDT pools use 100 or 1,000 tokens. Healthy registered relayers are discovered automatically; an optional custom URL is available in Advanced. Unavailable relayers, excessive fees, incomplete RPC synchronization or insufficient gas pause processing without bypassing the pool. Initial historical synchronization can take time.
+New mixing sessions use only ETH pools on the three chains above. ETH pools start at 0.1 ETH plus gas; other chains and assets use the ordinary forwarding mode. Healthy registered relayers are discovered automatically; an optional custom URL is available in Advanced. Unavailable relayers, excessive fees, incomplete RPC synchronization or insufficient gas pause processing without bypassing the pool. Initial historical synchronization can take time.
 
 The progress view shows deposits, withdrawals, collection and forwarding. Notes and signed transactions are saved before broadcasting; reopening resumes the saved journal. Only one page can operate the wallet at a time. Export the full backup to retain both private keys and all notes. Proofs are generated locally; relayers receive only the proof and public transaction arguments. The website link is a reference entry point and receives no keys or notes. Timing, amount combinations and the final transfer can still provide correlation clues.
 
