@@ -1,9 +1,10 @@
 import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import verifier from '../test/helpers/tornado-verifier.cjs';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const extension = path.join(root, 'extension');
@@ -24,6 +25,13 @@ try {
     try { payload = request.postDataJSON(); } catch {}
     if (!payload) return route.abort();
     const respond = (item) => {
+      if (item.method === 'eth_getBlockByNumber') return { jsonrpc: '2.0', id: item.id, result: {
+        number: /^0x[0-9a-f]+$/i.test(item.params?.[0]) ? item.params[0] : '0x1000000',
+        hash: '0x' + 'aa'.repeat(32), parentHash: '0x' + 'bb'.repeat(32),
+        timestamp: '0x65000000', nonce: '0x0000000000000000', difficulty: '0x0',
+        gasLimit: '0x1c9c380', gasUsed: '0x0', miner: '0x0000000000000000000000000000000000000000',
+        extraData: '0x', transactions: [], baseFeePerGas: '0x3b9aca00',
+      } };
       const values = { eth_chainId: '0x1', eth_getBalance: '0x0', eth_blockNumber: '0x1000000',
         eth_gasPrice: '0x3b9aca00', eth_maxPriorityFeePerGas: '0x3b9aca00', eth_getLogs: [] };
       return { jsonrpc: '2.0', id: item.id, result: values[item.method] ?? null };
@@ -61,14 +69,23 @@ try {
 
   const proofCheck = await page.evaluate(async (recipient) => {
     const note = await TornadoCrypto.createNote({ currency: 'eth', amount: '0.1', chainId: 1 });
+    let timeout;
     try {
-      const result = await TornadoCrypto.prove({ note: note.note, leaves: [note.commitment],
-        recipient, relayer: '0x2222222222222222222222222222222222222222', fee: '100000000000000' });
-      return { proofLength: result.proof.length, recipient: result.args[2] };
-    } finally { await TornadoCrypto.dispose(); }
+      const result = await Promise.race([
+        TornadoCrypto.prove({ note: note.note, leaves: [note.commitment],
+          recipient, relayer: '0x2222222222222222222222222222222222222222', fee: '100000000000000' }),
+        new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('Browser proof timed out')), 120000); }),
+      ]);
+      return { proofLength: result.proof.length, recipient: result.args[2], proof: result.proof, args: result.args };
+    } finally { clearTimeout(timeout); await TornadoCrypto.dispose(); }
   }, stored.secondWallet.address);
   assert.equal(proofCheck.proofLength, 514);
   assert.equal(proofCheck.recipient.toLowerCase(), stored.secondWallet.address.toLowerCase());
+  assert.equal(verifier.verify(proofCheck.proof, proofCheck.args), true, 'The actual browser proof failed independent verification');
+  const waitingState = await page.evaluate(async () => (await chrome.storage.local.get('active')).active.mix);
+  assert.equal(waitingState.phase, 'waiting');
+  assert.equal(waitingState.error, undefined, 'Mocked RPC caused a hidden background failure');
+  assert.equal(await page.locator('#status').evaluate((el) => el.classList.contains('err')), false);
 
   const duplicate = await context.newPage();
   await duplicate.goto(appUrl);
@@ -81,6 +98,10 @@ try {
   await page.locator('#mixBackup').click();
   const backup = await downloaded;
   assert.match(backup.suggestedFilename(), /^relay-wallet-backup-/);
+  const backedUp = JSON.parse(await readFile(await backup.path(), 'utf8'));
+  assert.equal(backedUp.session.id, stored.id);
+  assert.equal(backedUp.session.privateKey, stored.privateKey);
+  assert.equal(backedUp.session.secondWallet.privateKey, stored.secondWallet.privateKey);
   await page.locator('#lang').click();
   assert.equal(await page.locator('html').getAttribute('lang'), 'zh-CN');
   assert.match(await page.locator('#mixSteps').innerText(), /第二钱包/);
