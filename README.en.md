@@ -30,6 +30,14 @@ Supported chains: Ethereum, BNB Smart Chain, Polygon, Arbitrum, Optimism, Base, 
   When the token arrives, the gas wallet tops up the one-time address with the gas required (30% above the estimate). After the token is sent to B, leftover gas is returned to the gas wallet.
   One gas wallet works on every EVM chain, but it needs a small native-coin balance on the chain you are using. If the balance is too low, the page tells you how much to deposit and continues automatically once it arrives.
 
+### Gas fee estimate
+
+The setup view and the receiving view both show an **Estimated forwarding gas fee**, calculated from the selected chain's current gas price and shown as a native-coin amount plus its USD equivalent.
+
+- Native coin: the cost of one plain transfer.
+- Token: the gas-wallet top-up transfer plus the token transfer (estimated as a typical ERC-20 transfer).
+- This is an estimate; the actual fee is set when the transaction is sent. The USD price comes from CoinGecko's public API; if it is unavailable, only the native-coin amount is shown.
+
 ### Why Bitget Wallet gasless transfer is not supported
 
 Integrating Bitget Wallet's gasless transfer (fee deducted from the USDT/USDC itself, no gas wallet needed) was considered and dropped.

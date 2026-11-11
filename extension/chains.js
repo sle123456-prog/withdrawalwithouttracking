@@ -1,10 +1,11 @@
 // 支持的 EVM 主流链。tokens 为预置代币（合约地址小写），其他代币可在界面里填合约地址。
+// priceId：原生币在 CoinGecko 上的 ID，用于把手续费折算成 USD。
 // l1Oracle：OP Stack / Scroll 等 L2 额外收取 L1 数据费，用预言机估算后预留。
 const OP_ORACLE = '0x420000000000000000000000000000000000000f';
 
 const CHAINS = [
   {
-    id: 1, name: 'Ethereum', symbol: 'ETH',
+    id: 1, name: 'Ethereum', symbol: 'ETH', priceId: 'ethereum',
     rpcs: ['https://ethereum-rpc.publicnode.com', 'https://eth.llamarpc.com'],
     explorer: 'https://etherscan.io',
     tokens: {
@@ -14,7 +15,7 @@ const CHAINS = [
     },
   },
   {
-    id: 56, name: 'BNB Smart Chain', symbol: 'BNB',
+    id: 56, name: 'BNB Smart Chain', symbol: 'BNB', priceId: 'binancecoin',
     rpcs: ['https://bsc-rpc.publicnode.com', 'https://bsc-dataseed.binance.org'],
     explorer: 'https://bscscan.com',
     tokens: {
@@ -23,7 +24,7 @@ const CHAINS = [
     },
   },
   {
-    id: 137, name: 'Polygon', symbol: 'POL',
+    id: 137, name: 'Polygon', symbol: 'POL', priceId: 'polygon-ecosystem-token',
     rpcs: ['https://polygon-bor-rpc.publicnode.com', 'https://polygon-rpc.com'],
     explorer: 'https://polygonscan.com',
     tokens: {
@@ -32,7 +33,7 @@ const CHAINS = [
     },
   },
   {
-    id: 42161, name: 'Arbitrum One', symbol: 'ETH',
+    id: 42161, name: 'Arbitrum One', symbol: 'ETH', priceId: 'ethereum',
     rpcs: ['https://arbitrum-one-rpc.publicnode.com', 'https://arb1.arbitrum.io/rpc'],
     explorer: 'https://arbiscan.io',
     tokens: {
@@ -41,7 +42,7 @@ const CHAINS = [
     },
   },
   {
-    id: 10, name: 'Optimism', symbol: 'ETH', l1Oracle: OP_ORACLE,
+    id: 10, name: 'Optimism', symbol: 'ETH', priceId: 'ethereum', l1Oracle: OP_ORACLE,
     rpcs: ['https://optimism-rpc.publicnode.com', 'https://mainnet.optimism.io'],
     explorer: 'https://optimistic.etherscan.io',
     tokens: {
@@ -50,7 +51,7 @@ const CHAINS = [
     },
   },
   {
-    id: 8453, name: 'Base', symbol: 'ETH', l1Oracle: OP_ORACLE,
+    id: 8453, name: 'Base', symbol: 'ETH', priceId: 'ethereum', l1Oracle: OP_ORACLE,
     rpcs: ['https://base-rpc.publicnode.com', 'https://mainnet.base.org'],
     explorer: 'https://basescan.org',
     tokens: {
@@ -59,7 +60,7 @@ const CHAINS = [
     },
   },
   {
-    id: 43114, name: 'Avalanche C-Chain', symbol: 'AVAX',
+    id: 43114, name: 'Avalanche C-Chain', symbol: 'AVAX', priceId: 'avalanche-2',
     rpcs: ['https://avalanche-c-chain-rpc.publicnode.com', 'https://api.avax.network/ext/bc/C/rpc'],
     explorer: 'https://snowtrace.io',
     tokens: {
@@ -68,7 +69,7 @@ const CHAINS = [
     },
   },
   {
-    id: 59144, name: 'Linea', symbol: 'ETH',
+    id: 59144, name: 'Linea', symbol: 'ETH', priceId: 'ethereum',
     rpcs: ['https://linea-rpc.publicnode.com', 'https://rpc.linea.build'],
     explorer: 'https://lineascan.build',
     tokens: {
@@ -77,26 +78,26 @@ const CHAINS = [
     },
   },
   {
-    id: 324, name: 'zkSync Era', symbol: 'ETH',
+    id: 324, name: 'zkSync Era', symbol: 'ETH', priceId: 'ethereum',
     rpcs: ['https://mainnet.era.zksync.io'],
     explorer: 'https://explorer.zksync.io',
     tokens: {},
   },
   {
-    id: 534352, name: 'Scroll', symbol: 'ETH',
+    id: 534352, name: 'Scroll', symbol: 'ETH', priceId: 'ethereum',
     l1Oracle: '0x5300000000000000000000000000000000000002',
     rpcs: ['https://scroll-rpc.publicnode.com', 'https://rpc.scroll.io'],
     explorer: 'https://scrollscan.com',
     tokens: {},
   },
   {
-    id: 5000, name: 'Mantle', symbol: 'MNT',
+    id: 5000, name: 'Mantle', symbol: 'MNT', priceId: 'mantle',
     rpcs: ['https://mantle-rpc.publicnode.com', 'https://rpc.mantle.xyz'],
     explorer: 'https://mantlescan.xyz',
     tokens: {},
   },
   {
-    id: 100, name: 'Gnosis', symbol: 'xDAI',
+    id: 100, name: 'Gnosis', symbol: 'xDAI', priceId: 'xdai',
     rpcs: ['https://gnosis-rpc.publicnode.com', 'https://rpc.gnosischain.com'],
     explorer: 'https://gnosisscan.io',
     tokens: {},

@@ -36,6 +36,9 @@
         <input id="rpc" placeholder="https://…" spellcheck="false" autocomplete="off">
       </label>
     </details>
+    <p class="hint fee"><span data-i18n="feeLabel"></span> <b id="feeEst">—</b>
+      <button id="refreshFee" class="ghost small" data-i18n="refresh"></button><br>
+      <small data-i18n="feeNote"></small></p>
     <p id="setupError" class="error" hidden></p>
     <button id="start" class="primary" data-i18n="start"></button>
   </section>
@@ -60,6 +63,7 @@
       <dt data-i18n="factAsset"></dt><dd id="assetName"></dd>
       <dt data-i18n="factGas"></dt><dd id="gasMode"></dd>
       <dt data-i18n="factDest"></dt><dd><code id="destShow"></code></dd>
+      <dt data-i18n="feeLabel"></dt><dd id="feeEstS">—</dd>
       <dt data-i18n="factBalance"></dt><dd id="balances">—</dd>
     </dl>
 
