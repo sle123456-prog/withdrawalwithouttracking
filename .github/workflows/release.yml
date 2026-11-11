@@ -1,9 +1,12 @@
 name: Release
 
-# Pushing a tag like v1.1.0 publishes a GitHub Release with the extension zip attached.
+# Publishes a GitHub Release with the extension zip attached.
+# Runs when a tag like v1.1.0 is pushed, or when started manually (Actions > Release > Run workflow),
+# in which case the tag v<manifest version> is created on the selected branch's head.
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -14,16 +17,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check tag matches manifest version
+      - name: Resolve tag from manifest version
         run: |
           version=$(python3 -c "import json; print(json.load(open('extension/manifest.json'))['version'])")
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "v$version" != "$GITHUB_REF_NAME" ]; then
             echo "Tag $GITHUB_REF_NAME does not match manifest version $version" >&2
             exit 1
           fi
+          echo "TAG=v$version" >> "$GITHUB_ENV"
 
       - name: Package extension
-        run: zip -qr "relay-wallet-extension-$GITHUB_REF_NAME.zip" extension
+        run: zip -qr "relay-wallet-extension-$TAG.zip" extension
 
       - name: Publish release
         env:
@@ -40,8 +44,8 @@ jobs:
 
           To update, overwrite the folder with the new files and click the reload button on `chrome://extensions`. Do not remove the extension first: that erases the stored private keys.
 
-          See [README](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/README.en.md) ([中文](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/README.md)) for usage, gas handling and limitations. Test with a small amount first.
+          See [README](https://github.com/${{ github.repository }}/blob/${{ env.TAG }}/README.en.md) ([中文](https://github.com/${{ github.repository }}/blob/${{ env.TAG }}/README.md)) for usage, gas handling and limitations. Test with a small amount first.
           NOTES
           sed -i 's/^          //' notes.md
-          gh release create "$GITHUB_REF_NAME" "relay-wallet-extension-$GITHUB_REF_NAME.zip" \
-            --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes-file notes.md
+          gh release create "$TAG" "relay-wallet-extension-$TAG.zip" \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$TAG" --notes-file notes.md
