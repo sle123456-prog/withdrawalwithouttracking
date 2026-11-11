@@ -1,4 +1,4 @@
-/* global ethers, qrcode, CHAINS, chrome */
+/* global ethers, qrcode, CHAINS, chrome, bgwEligible, bgwTransfer */
 'use strict';
 
 const POLL_MS = 6000;
@@ -163,6 +163,42 @@ async function fundGas(s, p, amount) {
   return { hash: tx.hash };
 }
 
+// 通过 Bitget Wallet 免 Gas 中继转出代币。返回 true 表示已处理（成功或等待确认中），
+// 返回 false 表示本次不可用，由调用方回退到“自付 gas / Gas 钱包”路径。
+async function bitgetForward(s, p, wallet, tokenBal) {
+  if (s.bgwPending) {
+    const rc = await p.getTransactionReceipt(s.bgwPending.txid);
+    if (rc) {
+      delete s.bgwPending;
+      if (rc.status === 1) { s.phase = 'done'; return true; }
+    } else if (Date.now() - s.bgwPending.at < 15 * 60000) {
+      setStatus('Bitget 已提交转账，等待链上确认…');
+      return true;
+    } else {
+      delete s.bgwPending; // 长时间未上链，视为未成功，重新尝试
+    }
+  }
+  if (s.bgwRetryAt && Date.now() < s.bgwRetryAt) return false;
+  setStatus('已收到 ' + fmt(tokenBal, s.decimals) + ' ' + s.assetSymbol + '，正在通过 Bitget Wallet 免 Gas 转出…');
+  s.bgwRetryAt = Date.now() + 60000; // 无论结果如何，一分钟内不重复请求
+  const r = await bgwTransfer(s, wallet, ethers.formatUnits(tokenBal, s.decimals).replace(/\.0$/, ''));
+  if (r.unavailable) {
+    s.bgwNote = r.unavailable;
+    return false;
+  }
+  delete s.bgwNote;
+  s.bgwPending = { txid: r.txid, at: Date.now() };
+  addTx(s, r.txid, '免 Gas 转出 ' + r.amount + ' ' + s.assetSymbol + ' → B' + (r.fee ? '（手续费 ' + r.fee + '）' : ''));
+  await saveActive(); // 先落盘，避免页面关闭后重复提交
+  const rc = await p.waitForTransaction(r.txid, 1, 180000).catch(() => null);
+  if (rc) {
+    delete s.bgwPending;
+    if (rc.status !== 1) throw new Error('免 Gas 交易在链上执行失败：' + r.txid);
+    s.phase = 'done';
+  }
+  return true;
+}
+
 // ---------- 主循环 ----------
 async function tick() {
   if (!active || busy) return;
@@ -193,8 +229,13 @@ async function tick() {
       }
     } else if (tokenBal > 0n) {
       setStatus('已收到 ' + fmt(tokenBal, s.decimals) + ' ' + s.assetSymbol + '，正在转出到 B…');
-      let r = await forwardToken(s, p, wallet, tokenBal);
+      const viaBitget = s.gasMode === 'bitget' && (await bitgetForward(s, p, wallet, tokenBal));
+      let r = viaBitget ? null : await forwardToken(s, p, wallet, tokenBal);
       delete s.gasShort;
+      if (viaBitget) {
+        // 已交给 Bitget 中继处理（或正在等待确认）
+      } else {
+      if (r.needGas) setStatus('正在准备手续费…');
       if (r.needGas && gasWallet) {
         setStatus('Gas 钱包正在垫付手续费…');
         const f = await fundGas(s, p, r.needGas);
@@ -220,6 +261,7 @@ async function tick() {
           const r2 = await sweepNative(s, p, wallet, back ? gasWallet.address : s.dest);
           if (r2) addTx(s, r2.hash, '剩余 ' + fmt(r2.value, 18) + ' ' + chain.symbol + (back ? ' → Gas 钱包' : ' → B'));
         } catch (e) { console.warn('sweep leftover failed', e); }
+      }
       }
     }
     await saveActive();
@@ -266,12 +308,21 @@ function setStatus(text, kind) {
 
 function renderPhase(s) {
   const chain = chainById(s.chainId);
-  if (s.phase === 'done') {
+  if (s.bgwPending) {
+    setStatus('Bitget 已提交转账，等待链上确认…');
+  } else if (s.phase === 'done') {
     setStatus('✓ 已完成：资金已转入 B。仍在监听该地址，后续到账也会自动转出；点“重置”可换新地址。', 'ok');
   } else if (s.phase === 'need_gas' && s.gasShort && gasWallet) {
     setStatus(
       `已收到 ${s.assetSymbol}，但 Gas 钱包在 ${chain.name} 上余额不足。` +
       `请向 Gas 钱包 ${gasWallet.address} 充值至少 ${fmt(BigInt(s.gasShort), 18)} ${chain.symbol}（建议多充一些供以后使用），到账后自动继续。`,
+      'warn'
+    );
+  } else if (s.phase === 'need_gas' && s.gasMode === 'bitget' && s.bgwNote) {
+    setStatus(
+      `已收到 ${s.assetSymbol}，但 Bitget 免 Gas 本次不可用（${s.bgwNote}），每分钟自动重试。` +
+      `也可以向中转地址转入约 ${fmt(BigInt(s.needGas), 18)} ${chain.symbol} 作为 gas` +
+      (gasWallet ? '。' : '，或在下方配置 Gas 钱包。'),
       'warn'
     );
   } else if (s.phase === 'need_gas') {
@@ -321,6 +372,14 @@ function fillAssets() {
   for (const [sym, addr] of Object.entries(chain.tokens)) sel.add(new Option(sym, addr));
   sel.add(new Option('其他代币（填写合约地址）', 'custom'));
   $('customTokenRow').hidden = true;
+  updateBgwRow();
+}
+
+// 仅当所选链 + 代币支持 Bitget 免 Gas 时显示该选项
+function updateBgwRow() {
+  const v = $('asset').value;
+  const asset = v === 'custom' ? $('customToken').value.trim() : v;
+  $('bgwRow').hidden = !bgwEligible(Number($('chain').value), asset);
 }
 
 function showSetup() {
@@ -330,6 +389,7 @@ function showSetup() {
   $('setupError').hidden = true;
   $('dest').value = '';
   $('customToken').value = '';
+  updateBgwRow();
   renderHistory();
 }
 
@@ -343,6 +403,8 @@ function showSession() {
   $('address').textContent = s.address;
   $('destShow').textContent = s.dest;
   $('assetName').textContent = s.assetSymbol + (s.asset === 'native' ? '（原生币）' : '（' + s.asset + '）');
+  $('gasMode').textContent = s.asset === 'native' ? '从到账金额中扣除'
+    : s.gasMode === 'bitget' ? 'Bitget Wallet 免 Gas（手续费从代币中扣除）' : 'Gas 钱包代付';
   $('balances').textContent = '—';
   $('pk').hidden = true;
   $('pk').textContent = '';
@@ -428,8 +490,14 @@ async function onStart() {
       asset = raw;
     }
     if (asset !== 'native') {
-      if (!gasWallet) return fail('接收代币需要先在下方配置 Gas 钱包（用于代付转出手续费）。');
       s.asset = ethers.getAddress(asset);
+      const useBgw = $('bgw').checked && bgwEligible(chain.id, s.asset);
+      if (!useBgw && !gasWallet) {
+        return fail('接收代币需要先在下方配置 Gas 钱包' +
+          (bgwEligible(chain.id, s.asset) ? '，或勾选“Bitget Wallet 免 Gas 转账”。' : '（该链/代币不支持 Bitget 免 Gas）。'));
+      }
+      s.gasMode = useBgw ? 'bitget' : 'wallet';
+      await store.set('prefs', { bgw: $('bgw').checked });
       provider = null;
       const p = await getProvider(s);
       const c = new ethers.Contract(s.asset, ERC20_ABI, p);
@@ -534,7 +602,9 @@ async function init() {
     if (!confirm('删除后私钥将从本机移除。如果钱包里还有余额，请先确认已备份私钥。确定删除？')) return;
     await setGasWallet(null);
   };
-  $('asset').onchange = () => { $('customTokenRow').hidden = $('asset').value !== 'custom'; };
+  $('asset').onchange = () => { $('customTokenRow').hidden = $('asset').value !== 'custom'; updateBgwRow(); };
+  $('customToken').oninput = updateBgwRow;
+  $('bgw').checked = !!((await store.get('prefs')) || {}).bgw;
   $('start').onclick = onStart;
   $('reset').onclick = onReset;
   $('copy').onclick = async () => {

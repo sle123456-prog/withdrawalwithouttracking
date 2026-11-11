@@ -24,6 +24,17 @@
   代币到账后，Gas 钱包自动给中转地址垫付所需 gas（按预估多给 30%），代币转给 B 后，剩余 gas 自动退回 Gas 钱包。
   同一个 Gas 钱包通用于所有 EVM 链，但要在你使用的那条链上有少量原生币；余额不足时页面会提示充值多少，充值后自动继续。
 
+### 可选：Bitget Wallet 免 Gas 转账（无需 Gas 钱包）
+
+接收 **USDT / USDC** 且链为 **Ethereum、BNB Chain、Base、Arbitrum、Polygon** 时，设置页会出现
+“使用 Bitget Wallet 免 Gas 转账”选项。勾选后不需要配置 Gas 钱包：
+
+- 中转地址只做离线签名，由 Bitget Wallet 的中继服务代为上链，**手续费从转账的 USDT/USDC 里扣除**，B 实际到账 = 转入金额 − 手续费。
+- 这是 Bitget Wallet 公开的转账接口（`getTransferDataV4` + `send`），不是 App 内“新地址首笔免 Gas”的活动额度——后者只在 Bitget Wallet App 内发放，第三方程序领不到。
+- 是否能匹配到免 Gas 方案由 Bitget 服务端按链/代币/金额决定，不保证每次可用。不可用时程序每分钟重试；如果配置了 Gas 钱包会自动改用 Gas 钱包，否则提示你手动补 gas。
+- 程序会校验 Bitget 响应的 RSA 签名后才签名；但待签名内容由 Bitget 服务器生成，等于信任 Bitget 的中继。风险范围仅限该中转地址上的这笔资金。
+- 转账请求经过 Bitget 服务器，它能看到中转地址、B 地址和你的 IP。
+
 ## 安全与限制
 
 - 私钥在本机随机生成，只保存在浏览器的插件存储里（未加密），不会上传。
