@@ -163,6 +163,65 @@ async function fundGas(s, p, amount) {
   return { hash: tx.hash };
 }
 
+// ---------- 手续费预估 ----------
+// 代币转出按典型的 ERC-20 transfer（约 65000 gas，含 30% 余量）加上 Gas 钱包垫付那笔转账估算。
+const TOKEN_TRANSFER_GAS = 84500n;
+const priceCache = {}; // priceId -> { usd, at }
+
+async function nativeUsdPrice(chain) {
+  const hit = priceCache[chain.priceId];
+  if (hit && Date.now() - hit.at < 60000) return hit.usd;
+  const resp = await fetch('https://api.coingecko.com/api/v3/simple/price?vs_currencies=usd&ids=' + chain.priceId);
+  if (!resp.ok) throw new Error('HTTP ' + resp.status);
+  const usd = ((await resp.json())[chain.priceId] || {}).usd;
+  if (typeof usd !== 'number') throw new Error('no price');
+  priceCache[chain.priceId] = { usd, at: Date.now() };
+  return usd;
+}
+
+// 返回预计手续费（wei）。isToken=false：一笔原生币转账；true：Gas 钱包垫付 + 代币转账。
+async function estimateFee(ctx, isToken) {
+  const chain = chainById(ctx.chainId);
+  const p = await getProvider(ctx);
+  const gasPrice = await getGasPrice(p);
+  const dummy = '0x000000000000000000000000000000000000dEaD';
+  let fee = 21000n * gasPrice + await l1Fee(p, chain, { to: dummy, value: 10n ** 18n, gasLimit: 21000n, gasPrice });
+  if (isToken) {
+    const data = erc20.encodeFunctionData('transfer', [dummy, 10n ** 18n]);
+    fee += TOKEN_TRANSFER_GAS * gasPrice +
+      await l1Fee(p, chain, { to: dummy, data, gasLimit: TOKEN_TRANSFER_GAS, gasPrice });
+  }
+  return fee;
+}
+
+function fmtUsd(v) {
+  return v >= 0.01 ? v.toFixed(2) : v.toPrecision(2);
+}
+
+let feeSeq = 0;
+async function refreshFee() {
+  const seq = ++feeSeq;
+  const ctx = active || { chainId: Number($('chain').value), rpc: $('rpc').value.trim() };
+  const isToken = active ? active.asset !== 'native' : $('asset').value !== 'native';
+  const chain = chainById(ctx.chainId);
+  const show = (text) => { if (seq === feeSeq) { $('feeEst').textContent = text; $('feeEstS').textContent = text; } };
+  show(t('feeLoading'));
+  try {
+    const fee = await estimateFee(ctx, isToken);
+    let text = t('feeValue', { amount: fmt(fee, 18), symbol: chain.symbol });
+    show(text);
+    try {
+      const usd = await nativeUsdPrice(chain);
+      text += t('feeUsd', { usd: fmtUsd(Number(ethers.formatEther(fee)) * usd) });
+    } catch {
+      text += t('feeNoUsd');
+    }
+    show(text);
+  } catch (e) {
+    show(t('feeFailed', { err: shortErr(e) }));
+  }
+}
+
 // ---------- 主循环 ----------
 async function tick() {
   if (!active || busy) return;
@@ -328,6 +387,7 @@ function showSetup() {
   $('dest').value = '';
   $('customToken').value = '';
   renderHistory();
+  refreshFee();
 }
 
 function showSession() {
@@ -353,6 +413,7 @@ function showSession() {
   renderPhase(s);
   renderHistory();
   startLoop();
+  refreshFee();
 }
 
 function renderHistory() {
@@ -538,8 +599,11 @@ async function init() {
       renderTxs(active);
       renderPhase(active);
     }
+    refreshFee();
   };
-  $('chain').onchange = () => { fillAssets(); refreshGasBalance(); };
+  $('chain').onchange = () => { fillAssets(); refreshGasBalance(); refreshFee(); };
+  $('refreshFee').onclick = refreshFee;
+  $('rpc').onchange = refreshFee;
   $('saveGas').onclick = onSaveGas;
   $('genGas').onclick = () => setGasWallet(ethers.Wallet.createRandom());
   $('refreshGas').onclick = refreshGasBalance;
@@ -558,7 +622,7 @@ async function init() {
     if (!confirm(t('cRemoveGas'))) return;
     await setGasWallet(null);
   };
-  $('asset').onchange = () => { $('customTokenRow').hidden = $('asset').value !== 'custom'; };
+  $('asset').onchange = () => { $('customTokenRow').hidden = $('asset').value !== 'custom'; refreshFee(); };
   $('start').onclick = onStart;
   $('reset').onclick = onReset;
   $('copy').onclick = async () => {
