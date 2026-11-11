@@ -30,16 +30,11 @@ Supported chains: Ethereum, BNB Smart Chain, Polygon, Arbitrum, Optimism, Base, 
   When the token arrives, the gas wallet tops up the one-time address with the gas required (30% above the estimate). After the token is sent to B, leftover gas is returned to the gas wallet.
   One gas wallet works on every EVM chain, but it needs a small native-coin balance on the chain you are using. If the balance is too low, the page tells you how much to deposit and continues automatically once it arrives.
 
-### Optional: Bitget Wallet gasless transfer (no gas wallet needed)
+### Why Bitget Wallet gasless transfer is not supported
 
-When receiving **USDT / USDC** on **Ethereum, BNB Chain, Base, Arbitrum or Polygon**, the setup form shows a **Use Bitget Wallet gasless transfer** checkbox (使用 Bitget Wallet 免 Gas 转账). With it ticked you do not need a gas wallet:
-
-- The one-time address only signs offline; Bitget Wallet's relay submits the transaction, and **the fee is deducted from the USDT/USDC being transferred**. B receives the deposited amount minus the fee.
-- This uses Bitget Wallet's public transfer API (`getTransferDataV4` + `send`). It is not the in-app "first transaction gas-free" promotion; no public interface was found that lets a third-party program claim that allowance.
-- Whether a gasless plan is matched is decided by Bitget's server per chain, token and amount, and is not guaranteed. When unavailable, the extension retries every minute; if a gas wallet is configured it falls back to it, otherwise it asks you to top up gas manually.
-- The extension verifies the RSA signature on Bitget's response before signing anything. The data to sign is still produced by Bitget's server, so you are trusting Bitget's relay. The exposure is limited to the funds on that one-time address.
-- The transfer request goes through Bitget's servers, which can see the one-time address, address B and your IP.
-- This mode has only been tested against a local mock of the API, not against Bitget's live service. Try a very small amount first.
+Integrating Bitget Wallet's gasless transfer (fee deducted from the USDT/USDC itself, no gas wallet needed) was considered and dropped.
+Bitget Wallet's documentation does not state the minimum amount this method supports, so users could not be told in advance whether a given transfer would go through gasless.
+To avoid misleading users, the option is not offered; token forwarding always uses the gas wallet.
 
 ## Security and limitations
 

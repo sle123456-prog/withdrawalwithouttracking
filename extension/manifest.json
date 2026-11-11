@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "一次性中转钱包 (EVM Relay Wallet)",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "为每次提币生成一次性 EVM 中转地址，收到资金后自动转入你的目标地址。",
   "permissions": ["storage"],
   "host_permissions": ["https://*/*", "http://127.0.0.1/*", "http://localhost/*"],

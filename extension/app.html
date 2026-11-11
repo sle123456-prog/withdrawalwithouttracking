@@ -24,11 +24,6 @@
     <label id="customTokenRow" hidden>代币合约地址
       <input id="customToken" placeholder="0x…" spellcheck="false" autocomplete="off">
     </label>
-    <label id="bgwRow" class="check" hidden>
-      <input id="bgw" type="checkbox">
-      <span>使用 Bitget Wallet 免 Gas 转账：手续费从转账的 USDT/USDC 中扣除，无需 Gas 钱包。<br>
-      <small>B 实际到账 = 转入金额 − 手续费。转账请求经 Bitget 服务器中继，它能看到中转地址、B 地址和你的 IP。</small></span>
-    </label>
     <label>目标地址 B（最终收款地址）
       <input id="dest" placeholder="0x…" spellcheck="false" autocomplete="off">
     </label>
@@ -118,7 +113,6 @@
 <script src="vendor/ethers.umd.min.js"></script>
 <script src="vendor/qrcode.js"></script>
 <script src="chains.js"></script>
-<script src="bitget.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
