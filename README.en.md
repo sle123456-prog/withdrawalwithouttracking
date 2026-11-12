@@ -27,9 +27,10 @@ Supported chains: Ethereum, BNB Smart Chain, Polygon, Arbitrum, Optimism, Base, 
 
 - **Withdrawing the native coin (ETH/BNB/POL…)**: the fee is deducted from the amount received. No gas wallet is needed.
 - **Withdrawing a token (USDT/USDC…)**: forwarding a token is paid with native coin on the one-time address. When the token arrives:
-  - The one-time address has enough native coin: it forwards directly and the gas wallet is not used; leftover gas goes to B.
+  - The one-time address has enough native coin: it forwards directly and the gas wallet is not used; leftover gas stays on the one-time address and is not sent to B.
   - Not enough, and a **Gas wallet** is bound: the gas wallet tops up the shortfall (30% above the estimate). After the token is sent to B, leftover gas is returned to the gas wallet.
-  - Not enough, and no gas wallet is bound: the page shows the amount needed. Send a little native coin to the one-time address yourself, or bind a gas wallet on the spot; forwarding continues automatically once either is done.
+  - Not enough, and no gas wallet is bound: the page shows the amount needed. Send a little native coin to the one-time address yourself, or bind a gas wallet on the spot; forwarding continues automatically once either is done. With a manual top-up, leftover gas also stays on the one-time address.
+- **Leftover gas on a one-time address** is not moved automatically. To recover it, export the private key from the session view (restore the address under **Past addresses** first if needed), import it into any wallet and move the funds yourself.
 - **The gas wallet is optional**: import a private key or generate a new wallet at the bottom of the page; it is saved once and reused afterwards. One gas wallet works on every EVM chain, but it needs a small native-coin balance on the chain you are using. If the balance is too low, the page tells you how much to deposit and continues automatically once it arrives.
 
 ### Gas fee estimate
@@ -50,6 +51,7 @@ To avoid misleading users, the option is not offered; token forwarding always us
 
 - Private keys are generated randomly on your machine and stored only in the browser's extension storage (unencrypted). They are never uploaded.
 - After a reset, old addresses stay under **Past addresses**. If funds arrive there later, click **Restore** to forward them; you can also export the private key from the session view.
+- The **Past addresses** list shows each old address's native-coin balance (and the token balance for token sessions), marks non-zero ones with “has funds”, and has a Refresh button. Clearing the history permanently deletes those private keys, so any leftover gas on them becomes unrecoverable.
 - On-chain transfers are public: anyone can follow "exchange → one-time address → B" in a block explorer.
   This tool only keeps B out of the exchange's withdrawal records. It does not provide mixer-level anonymity.
 - The gas wallet's private key is also stored unencrypted on your machine. Keep only a small amount of gas in it.

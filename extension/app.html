@@ -106,7 +106,10 @@
   </section>
 
   <section id="historyBox" class="card" hidden>
-    <h2 data-i18n="historyTitle"></h2>
+    <div class="row between">
+      <h2 data-i18n="historyTitle"></h2>
+      <button id="refreshHistory" class="ghost small" data-i18n="refresh"></button>
+    </div>
     <p class="hint" data-i18n="historyHint"></p>
     <ul id="history" class="history"></ul>
     <button id="clearHistory" class="ghost danger" data-i18n="clearHistory"></button>
