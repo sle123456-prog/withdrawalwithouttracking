@@ -390,6 +390,11 @@ function showSetup() {
   refreshFee();
 }
 
+function gasModeText(s) {
+  if (s.asset === 'native') return t('gasModeNative');
+  return t(gasWallet ? 'gasModeWallet' : 'gasModeSelf');
+}
+
 function showSession() {
   const s = active;
   const chain = chainById(s.chainId);
@@ -400,7 +405,7 @@ function showSession() {
   $('address').textContent = s.address;
   $('destShow').textContent = s.dest;
   $('assetName').textContent = s.assetSymbol + (s.asset === 'native' ? t('nativeSuffix') : ' (' + s.asset + ')');
-  $('gasMode').textContent = t(s.asset === 'native' ? 'gasModeNative' : 'gasModeWallet');
+  $('gasMode').textContent = gasModeText(s);
   $('balances').textContent = '—';
   $('pk').hidden = true;
   $('pk').textContent = '';
@@ -487,7 +492,6 @@ async function onStart() {
       asset = raw;
     }
     if (asset !== 'native') {
-      if (!gasWallet) return fail(t('eNeedGasWallet'));
       s.asset = ethers.getAddress(asset);
       provider = null;
       const p = await getProvider(s);
@@ -550,6 +554,7 @@ async function setGasWallet(w) {
   gasWallet = w ? { privateKey: w.privateKey, address: w.address } : null;
   await store.set('gasWallet', gasWallet);
   renderGas();
+  if (active) $('gasMode').textContent = gasModeText(active); // 绑定/删除后立即反映在会话页
 }
 
 async function onSaveGas() {
@@ -594,7 +599,7 @@ async function init() {
       const chain = chainById(active.chainId);
       $('withdrawHint').textContent = t('withdrawHint', { net: chain.name });
       $('assetName').textContent = active.assetSymbol + (active.asset === 'native' ? t('nativeSuffix') : ' (' + active.asset + ')');
-      $('gasMode').textContent = t(active.asset === 'native' ? 'gasModeNative' : 'gasModeWallet');
+      $('gasMode').textContent = gasModeText(active);
       $('reveal').textContent = t($('pk').hidden ? 'showKey' : 'hideKey');
       renderTxs(active);
       renderPhase(active);

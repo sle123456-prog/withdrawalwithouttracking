@@ -26,16 +26,18 @@ Supported chains: Ethereum, BNB Smart Chain, Polygon, Arbitrum, Optimism, Base, 
 ## Gas fees
 
 - **Withdrawing the native coin (ETH/BNB/POL…)**: the fee is deducted from the amount received. No gas wallet is needed.
-- **Withdrawing a token (USDT/USDC…)**: first configure a **Gas wallet** at the bottom of the page, either by importing a private key or generating a new wallet. It is saved once and reused afterwards.
-  When the token arrives, the gas wallet tops up the one-time address with the gas required (30% above the estimate). After the token is sent to B, leftover gas is returned to the gas wallet.
-  One gas wallet works on every EVM chain, but it needs a small native-coin balance on the chain you are using. If the balance is too low, the page tells you how much to deposit and continues automatically once it arrives.
+- **Withdrawing a token (USDT/USDC…)**: forwarding a token is paid with native coin on the one-time address. When the token arrives:
+  - The one-time address has enough native coin: it forwards directly and the gas wallet is not used; leftover gas goes to B.
+  - Not enough, and a **Gas wallet** is bound: the gas wallet tops up the shortfall (30% above the estimate). After the token is sent to B, leftover gas is returned to the gas wallet.
+  - Not enough, and no gas wallet is bound: the page shows the amount needed. Send a little native coin to the one-time address yourself, or bind a gas wallet on the spot; forwarding continues automatically once either is done.
+- **The gas wallet is optional**: import a private key or generate a new wallet at the bottom of the page; it is saved once and reused afterwards. One gas wallet works on every EVM chain, but it needs a small native-coin balance on the chain you are using. If the balance is too low, the page tells you how much to deposit and continues automatically once it arrives.
 
 ### Gas fee estimate
 
 The setup view and the receiving view both show an **Estimated forwarding gas fee**, calculated from the selected chain's current gas price and shown as a native-coin amount plus its USD equivalent.
 
 - Native coin: the cost of one plain transfer.
-- Token: the gas-wallet top-up transfer plus the token transfer (estimated as a typical ERC-20 transfer).
+- Token: the gas top-up transfer (from the gas wallet or sent manually) plus the token transfer (estimated as a typical ERC-20 transfer).
 - This is an estimate; the actual fee is set when the transaction is sent. The USD price comes from CoinGecko's public API; if it is unavailable, only the native-coin amount is shown.
 
 ### Why Bitget Wallet gasless transfer is not supported
