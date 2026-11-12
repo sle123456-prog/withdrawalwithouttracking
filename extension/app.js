@@ -1,5 +1,6 @@
-/* global ethers, qrcode, CHAINS, chrome, t, applyI18n, LANG:writable, vault, vaultCreate, vaultAddMethod,
-   vaultUnlock, vaultVerify, vaultSeal, vaultOpen, vaultForget, vaultPasskeySupported */
+/* global ethers, qrcode, CHAINS, chrome, t, applyI18n, LANG:writable,
+ TornadoPools, TornadoCrypto, TornadoRelayer, TornadoFlow, TornadoAdapter, FeeEstimator,
+ vault, vaultCreate, vaultAddMethod, vaultUnlock, vaultVerify, vaultSeal, vaultOpen, vaultForget, vaultPasskeySupported */
 'use strict';
 
 const POLL_MS = 6000;
@@ -40,18 +41,29 @@ let timer = null;
 let busy = false;
 let provider = null;
 let providerKey = '';
+let loopEpoch = 0;
+let mainnetProvider = null;
+let feeEstimator = null;
+let feeProvider = null;
+let feeProviderKey = '';
+let feeRefreshTimer = null;
+let feeRefreshEpoch = 0;
+let feeRequestsRunning = 0;
+let feeSessionFingerprint = '';
 
-// 含私钥的三项数据统一落盘：开启加密时整体加密成 vaultData，否则按原来的明文键保存。
-// 串行执行，避免并发写入互相覆盖。
+let securityBusy = false;
+let appReady = false;
 let persistChain = Promise.resolve();
 function persist() {
+  const snapshot = JSON.parse(JSON.stringify({ active, history, gasWallet }));
   persistChain = persistChain.catch(() => {}).then(async () => {
     if (vault.enabled) {
-      await store.set('vaultData', await vaultSeal({ active, history, gasWallet }));
+      if (!vault.unlocked) throw new Error('locked');
+      await store.set('vaultData', await vaultSeal(snapshot));
     } else {
-      await store.set('active', active);
-      await store.set('history', history);
-      await store.set('gasWallet', gasWallet);
+      await store.set('active', snapshot.active);
+      await store.set('history', snapshot.history);
+      await store.set('gasWallet', snapshot.gasWallet);
     }
   });
   return persistChain;
@@ -62,7 +74,6 @@ const saveHistory = persist;
 // ---------- 链访问 ----------
 const rpcKey = (s) => s.chainId + '|' + (s.rpc ? [s.rpc] : chainById(s.chainId).rpcs).join(',');
 
-// 当前会话用的 provider，带缓存
 async function getProvider(s) {
   const key = rpcKey(s);
   if (provider && providerKey === key) return provider;
@@ -71,7 +82,6 @@ async function getProvider(s) {
   return provider;
 }
 
-// 新建一个连接（不缓存），依次尝试各个 RPC 并核对 chainId
 async function openProvider(s) {
   const chain = chainById(s.chainId);
   const urls = s.rpc ? [s.rpc] : chain.rpcs;
@@ -106,13 +116,23 @@ async function getGasPrice(p) {
 }
 
 // OP Stack / Scroll 的 L1 数据费（估算值 ×1.5 作为预留）
+async function estimateL1FeeStrict(p, chain, tx) {
+  if (!chain.l1Oracle) {
+    if ([59144, 324, 5000].includes(chain.id)) throw new Error(t('feeL1Unavailable'));
+    return 0n;
+  }
+  const unsignedTx = { ...tx };
+  delete unsignedTx.from; // Sender is an RPC simulation field, not serialized transaction data.
+  const raw = ethers.Transaction.from({ ...unsignedTx, type: 0, chainId: chain.id, nonce: 1 }).unsignedSerialized;
+  const padded = ethers.concat([raw, '0x' + 'ff'.repeat(68)]);
+  const fee = await new ethers.Contract(chain.l1Oracle, ORACLE_ABI, p).getL1Fee(padded);
+  return (fee * 150n) / 100n;
+}
+
 async function l1Fee(p, chain, tx) {
   if (!chain.l1Oracle) return 0n;
   try {
-    const raw = ethers.Transaction.from({ ...tx, type: 0, chainId: chain.id, nonce: 1 }).unsignedSerialized;
-    const padded = ethers.concat([raw, '0x' + 'ff'.repeat(68)]); // 补上签名的长度
-    const fee = await new ethers.Contract(chain.l1Oracle, ORACLE_ABI, p).getL1Fee(padded);
-    return (fee * 150n) / 100n;
+    return await estimateL1FeeStrict(p, chain, tx);
   } catch {
     return 0n;
   }
@@ -191,68 +211,9 @@ async function fundGas(s, p, amount) {
   return { hash: tx.hash };
 }
 
-// ---------- 手续费预估 ----------
-// 代币转出按典型的 ERC-20 transfer（约 65000 gas，含 30% 余量）加上 Gas 钱包垫付那笔转账估算。
-const TOKEN_TRANSFER_GAS = 84500n;
-const priceCache = {}; // priceId -> { usd, at }
-
-async function nativeUsdPrice(chain) {
-  const hit = priceCache[chain.priceId];
-  if (hit && Date.now() - hit.at < 60000) return hit.usd;
-  const resp = await fetch('https://api.coingecko.com/api/v3/simple/price?vs_currencies=usd&ids=' + chain.priceId);
-  if (!resp.ok) throw new Error('HTTP ' + resp.status);
-  const usd = ((await resp.json())[chain.priceId] || {}).usd;
-  if (typeof usd !== 'number') throw new Error('no price');
-  priceCache[chain.priceId] = { usd, at: Date.now() };
-  return usd;
-}
-
-// 返回预计手续费（wei）。isToken=false：一笔原生币转账；true：Gas 钱包垫付 + 代币转账。
-async function estimateFee(ctx, isToken) {
-  const chain = chainById(ctx.chainId);
-  const p = await getProvider(ctx);
-  const gasPrice = await getGasPrice(p);
-  const dummy = '0x000000000000000000000000000000000000dEaD';
-  let fee = 21000n * gasPrice + await l1Fee(p, chain, { to: dummy, value: 10n ** 18n, gasLimit: 21000n, gasPrice });
-  if (isToken) {
-    const data = erc20.encodeFunctionData('transfer', [dummy, 10n ** 18n]);
-    fee += TOKEN_TRANSFER_GAS * gasPrice +
-      await l1Fee(p, chain, { to: dummy, data, gasLimit: TOKEN_TRANSFER_GAS, gasPrice });
-  }
-  return fee;
-}
-
-function fmtUsd(v) {
-  return v >= 0.01 ? v.toFixed(2) : v.toPrecision(2);
-}
-
-let feeSeq = 0;
-async function refreshFee() {
-  const seq = ++feeSeq;
-  const ctx = active || { chainId: Number($('chain').value), rpc: $('rpc').value.trim() };
-  const isToken = active ? active.asset !== 'native' : $('asset').value !== 'native';
-  const chain = chainById(ctx.chainId);
-  const show = (text) => { if (seq === feeSeq) { $('feeEst').textContent = text; $('feeEstS').textContent = text; } };
-  show(t('feeLoading'));
-  try {
-    const fee = await estimateFee(ctx, isToken);
-    let text = t('feeValue', { amount: fmt(fee, 18), symbol: chain.symbol });
-    show(text);
-    try {
-      const usd = await nativeUsdPrice(chain);
-      text += t('feeUsd', { usd: fmtUsd(Number(ethers.formatEther(fee)) * usd) });
-    } catch {
-      text += t('feeNoUsd');
-    }
-    show(text);
-  } catch (e) {
-    show(t('feeFailed', { err: shortErr(e) }));
-  }
-}
-
 // ---------- 主循环 ----------
-async function tick() {
-  if (!active || busy) return;
+async function tickUnlocked() {
+  if (!active || busy || securityBusy || !appReady) return;
   busy = true;
   const s = active;
   try {
@@ -266,6 +227,43 @@ async function tick() {
     }
     if (s !== active) return;
     showBalances(s, native, tokenBal);
+
+    if (s.mode === 'tornado') {
+      if (s.mix) s.mix.actualRemainderWei = (s.asset === 'native' ? native : tokenBal).toString();
+      if (!mainnetProvider) {
+        mainnetProvider = s.chainId === 1 ? p : new ethers.FallbackProvider(
+          chainById(1).rpcs.map((url) => new ethers.JsonRpcProvider(url, 1, { batchMaxCount: 1 })), 1);
+      }
+      const save = async () => {
+        if (active !== s) throw new Error(t('mixSessionChanged'));
+        await persist();
+        renderMix(s);
+        const fingerprint = s.id + '|' + (s.mix?.round || 1) + '|' +
+          (s.mix?.plan || []).map((entry) => entry.amount).join(',') + '|' +
+          (s.mix?.notes || []).map((note) => note.withdrawalIntent?.relayer?.serviceFee ?? note.relayer?.serviceFee ?? '?').join(',');
+        if (fingerprint !== feeSessionFingerprint) {
+          feeSessionFingerprint = fingerprint;
+          scheduleFeeEstimate();
+        }
+      };
+      const adapter = TornadoAdapter.create({ session: s, provider: p, mainnetProvider,
+        storage: store, save, gasWallet, getGasPrice, l1Fee, chain,
+        onProgress: (key) => { if (s === active) setStatus(t(key)); },
+        onTx: (hash, key) => {
+          if (!s.txs.some((x) => x.hash === hash)) addTx(s, hash, key || 'mixTx');
+        },
+      });
+      await TornadoFlow.tick(s, adapter);
+      if (s.mix && s.mix.phase === 'done') s.phase = 'done';
+      await save();
+      $('mixSecondBalance').textContent = fmt(await adapter.secondBalance(s), s.decimals) + ' ' + s.assetSymbol;
+      const remaining = s.asset === 'native' ? await p.getBalance(s.address) :
+        await new ethers.Contract(s.asset, ERC20_ABI, p).balanceOf(s.address);
+      s.mix.actualRemainderWei = remaining.toString();
+      $('mixRemainder').textContent = fmt(remaining, s.decimals) + ' ' + s.assetSymbol;
+      renderPhase(s);
+      return;
+    }
 
     if (s.asset === 'native') {
       if (native > 0n) {
@@ -319,22 +317,37 @@ async function tick() {
         s.asset === 'native' ? 0n : await new ethers.Contract(s.asset, ERC20_ABI, p).balanceOf(s.address));
     }
   } catch (e) {
-    if (s === active) setStatus(t('stError', { err: shortErr(e) }), 'err');
+    if (s === active) {
+      if (s.mode === 'tornado' && s.mix?.error) renderPhase(s);
+      else setStatus(t('stError', { err: shortErr(e) }), 'err');
+    }
     provider = null; // 下次换节点重连
   } finally {
     busy = false;
   }
 }
 
+async function tick() {
+  if (navigator.locks) {
+    return navigator.locks.request('relay-wallet-send', { ifAvailable: true }, async (lock) => {
+      if (lock) await tickUnlocked();
+    });
+  }
+  return tickUnlocked();
+}
+
 function startLoop() {
   stopLoop();
+  const epoch = loopEpoch;
   const run = async () => {
+    if (epoch !== loopEpoch) return;
     await tick();
-    timer = setTimeout(run, POLL_MS);
+    if (epoch === loopEpoch) timer = setTimeout(run, POLL_MS);
   };
   run();
 }
 function stopLoop() {
+  loopEpoch++;
   clearTimeout(timer);
   timer = null;
 }
@@ -354,6 +367,15 @@ function setStatus(text, kind) {
 }
 
 function renderPhase(s) {
+  if (s.mode === 'tornado') {
+    renderMix(s);
+    if (s.mix && s.mix.error) return setStatus(t('mixPaused', { err: t(s.mix.error.message || s.mix.error) }), 'warn');
+    const phase = s.mix ? s.mix.phase : 'waiting';
+    const keys = { waiting: 'mixWaiting', depositing: 'mixDepositing', withdrawing: 'mixWithdrawing',
+      collecting: 'mixCollecting', finalizing: 'mixForwarding', done: 'mixDone',
+      preparing: 'mixPreparing', planned: 'mixDepositing', insufficient: 'mixTooSmall' };
+    return setStatus(t(keys[phase] || 'mixWorking'), phase === 'done' ? 'ok' : undefined);
+  }
   const chain = chainById(s.chainId);
   if (s.phase === 'done') {
     setStatus(t('stDone'), 'ok');
@@ -369,6 +391,30 @@ function renderPhase(s) {
   } else {
     setStatus(t('stWaiting', { sec: POLL_MS / 1000 }));
   }
+}
+
+function renderMix(s) {
+  const enabled = s && s.mode === 'tornado';
+  $('mixProgress').hidden = !enabled;
+  if (!enabled) return;
+  const m = s.mix || {};
+  $('mixSecondAddress').textContent = s.secondWallet.address;
+  $('mixCounts').textContent = t('mixCountsValue', { done: m.counts?.withdrawn || 0, total: m.counts?.total || 0 });
+  const remainder = m.actualRemainderWei ?? m.remainingWei;
+  if (remainder != null) $('mixRemainder').textContent = fmt(BigInt(remainder), s.decimals) + ' ' + s.assetSymbol;
+  const phase = m.phase || 'waiting';
+  const done = phase === 'done';
+  const step = done ? 5 : ({ waiting: 0, insufficient: 0, preparing: 1, planned: 1,
+    depositing: 1, withdrawing: 2, collecting: 3, finalizing: 4 })[phase] ?? 1;
+  const list = $('mixSteps');
+  list.replaceChildren();
+  ['mixStepReceived', 'mixStepDepositing', 'mixStepWithdrawing', 'mixStepCollecting', 'mixStepForwarding'].forEach((key, i) => {
+    const li = document.createElement('li');
+    li.textContent = t(key);
+    li.className = i < step ? 'done' : i === step ? 'active' : '';
+    if (i === step) li.setAttribute('aria-current', 'step');
+    list.append(li);
+  });
 }
 
 function showBalances(s, native, tokenBal) {
@@ -407,6 +453,189 @@ function fillAssets() {
   for (const [sym, addr] of Object.entries(chain.tokens)) sel.add(new Option(sym, addr));
   sel.add(new Option(t('otherToken'), 'custom'));
   $('customTokenRow').hidden = true;
+  updateMixAvailability();
+}
+
+function gasModeText(s) {
+  if (s.asset === 'native') return t('gasModeNative');
+  return t(gasWallet ? 'gasModeWallet' : 'gasModeSelf');
+}
+
+function canUseMix(chainId, asset) {
+  const chain = chainById(chainId);
+  return asset === 'native' && chain?.symbol === 'ETH' &&
+    TornadoPools.getPools(chainId, 'native').some((pool) => pool.currency === 'eth');
+}
+
+function updateMixAvailability() {
+  const available = canUseMix(Number($('chain').value), $('asset').value);
+  $('mixOption').hidden = !available;
+  $('mixRelayerOptions').hidden = !available;
+  $('mixMode').disabled = !available;
+  if (!available) $('mixMode').checked = false;
+  $('mixModeHint').textContent = t('mixModeHint');
+  scheduleFeeEstimate();
+}
+
+// Read-only estimates use their own RPC connection and never sign transactions
+// or modify the provider and private journal used by the forwarding loop.
+function feeContext() {
+  const s = active && !$('session').hidden ? active : null;
+  const chain = chainById(s ? s.chainId : $('chain').value);
+  const asset = s ? s.asset : $('asset').value === 'custom' ? $('customToken').value.trim() : $('asset').value;
+  return { s, chain, asset, dest: s ? s.dest : $('dest').value.trim(), rpc: s ? s.rpc : $('rpc').value.trim() };
+}
+
+function updateFeeVisibility() {
+  const { s, chain, asset } = feeContext();
+  const mixingAvailable = !!chain && canUseMix(chain.id, asset);
+  $('feeTornadoRow').hidden = !mixingAvailable;
+  $('feeAmountRow').hidden = !mixingAvailable || !!s;
+}
+
+function clearFeeValues() {
+  for (const id of ['feeNormalNative', 'feeNormalUsd', 'feeTornadoNative', 'feeTornadoUsd', 'feeTotalNative', 'feeTotalUsd']) {
+    $(id).textContent = '—';
+  }
+  $('feeRelayerService').textContent = t('feeServicePending');
+  $('feeRelayerNotice').hidden = false;
+  $('feeEstimateNote').textContent = t('feeReferenceOnly');
+}
+
+function scheduleFeeEstimate(delay = 600) {
+  if (!appReady) return;
+  clearTimeout(feeRefreshTimer);
+  const epoch = ++feeRefreshEpoch;
+  updateFeeVisibility();
+  clearFeeValues();
+  $('feeEstimateStatus').textContent = t('feeLoading');
+  feeRefreshTimer = setTimeout(() => refreshFeeEstimate(false, epoch), delay);
+}
+
+async function getFeeProvider(chain, rpc) {
+  const urls = rpc ? [rpc] : chain.rpcs;
+  const key = chain.id + '|' + urls.join(',');
+  if (feeProvider && feeProviderKey === key) return feeProvider;
+  let error;
+  for (const url of urls) {
+    let p;
+    try {
+      const request = new ethers.FetchRequest(url);
+      request.timeout = 10000;
+      p = new ethers.JsonRpcProvider(request, undefined, { batchMaxCount: 1, cacheTimeout: -1 });
+      if ((await p.getNetwork()).chainId !== BigInt(chain.id)) throw new Error(t('eChainId', { chain: chain.name, id: chain.id }));
+      feeProvider = p;
+      feeProviderKey = key;
+      return p;
+    } catch (e) { error = e; if (p) p.destroy(); }
+  }
+  throw error || new Error(t('feeEstimateUnavailable'));
+}
+
+function formatFeeNative(value, symbol) {
+  const amount = Number(ethers.formatUnits(BigInt(value), 18));
+  const formatted = new Intl.NumberFormat(LANG === 'zh' ? 'zh-CN' : 'en-US',
+    { maximumSignificantDigits: 6, useGrouping: false }).format(amount);
+  return '≈ ' + formatted + ' ' + symbol;
+}
+
+function formatFeeUsd(value) {
+  if (value == null || !Number.isFinite(value)) return t('feePriceUnavailable');
+  if (value > 0 && value < 0.01) return '< US$0.01';
+  return '≈ ' + new Intl.NumberFormat(LANG === 'zh' ? 'zh-CN' : 'en-US',
+    { style: 'currency', currency: 'USD' }).format(value);
+}
+
+async function refreshFeeEstimate(forcePrice = false, scheduledEpoch) {
+  if (!appReady) return;
+  clearTimeout(feeRefreshTimer);
+  const epoch = scheduledEpoch ?? ++feeRefreshEpoch;
+  if (epoch !== feeRefreshEpoch) return;
+  updateFeeVisibility();
+  $('feeEstimateStatus').textContent = t('feeLoading');
+  const { s, chain, asset, dest, rpc } = feeContext();
+  if (!chain) return;
+  if (asset !== 'native' && !ethers.isAddress(asset)) {
+    clearFeeValues();
+    $('feeEstimateStatus').textContent = t('feeInvalidToken');
+    return;
+  }
+  feeEstimator ||= FeeEstimator.create({ ethers });
+  feeRequestsRunning++;
+  try {
+    const [p, price] = await Promise.all([getFeeProvider(chain, rpc), feeEstimator.getUsdPrice(chain, { force: forcePrice })]);
+    const gasPriceWei = String(await getGasPrice(p));
+    const base = { chain, provider: p, asset, dest: ethers.isAddress(dest) ? dest : undefined,
+      sourceAddress: s?.address, secondAddress: s?.secondWallet?.address, gasWalletAddress: gasWallet?.address,
+      gasPriceWei, includeReturn: !!gasWallet, estimateL1Fee: estimateL1FeeStrict, price };
+    const normal = await feeEstimator.estimate({ ...base, mode: 'normal' });
+    if (epoch !== feeRefreshEpoch) return;
+    $('feeNormalNative').textContent = formatFeeNative(normal.networkWei, chain.symbol);
+    $('feeNormalUsd').textContent = formatFeeUsd(normal.networkUsd);
+    const warnings = new Set(normal.warnings);
+    let mix = null;
+    let mixError = null;
+    let previewAmount = null;
+    if (canUseMix(chain.id, asset)) {
+      try {
+        let plan = s?.mix?.plan?.length ? s.mix.plan.map((entry) => ({ ...entry })) : undefined;
+        if (!s && $('feeAmount').value.trim()) {
+          const raw = $('feeAmount').value.trim();
+          if (!/^\d+(?:\.\d+)?$/.test(raw)) throw new Error('feeAmountInvalid');
+          const amount = ethers.parseEther(raw);
+          const minimum = ethers.parseEther('0.1');
+          if (amount < minimum || amount % minimum !== 0n) throw new Error('feeAmountInvalid');
+          const pools = TornadoPools.getPools(chain.id, 'native').map((entry) =>
+            ({ ...entry, denomination: entry.amount, amount: ethers.parseUnits(entry.amount, entry.decimals).toString() }));
+          const planning = TornadoFlow.planBalance(amount, pools);
+          if (BigInt(planning.remainingWei) !== 0n) throw new Error('feeAmountInvalid');
+          plan = planning.plan;
+          previewAmount = ethers.formatEther(amount);
+        }
+        const notes = s?.mix?.notes?.map((note) => ({ amount: note.amount, relayer: note.relayer,
+          withdrawalIntent: note.withdrawalIntent ? { relayer: note.withdrawalIntent.relayer } : undefined }));
+        mix = await feeEstimator.estimate({ ...base, mode: 'tornado', plan, notes });
+        if (epoch !== feeRefreshEpoch) return;
+        $('feeTornadoNative').textContent = formatFeeNative(mix.networkWei, chain.symbol);
+        $('feeTornadoUsd').textContent = formatFeeUsd(mix.networkUsd);
+        $('feeRelayerService').textContent = mix.serviceFeeKnown ?
+          formatFeeNative(mix.serviceWei, chain.symbol) + ' / ' + formatFeeUsd(mix.serviceUsd) : t('feeServicePending');
+        $('feeRelayerNotice').hidden = mix.serviceFeeKnown;
+        $('feeTotalNative').textContent = mix.serviceFeeKnown ? formatFeeNative(mix.totalWei, chain.symbol) : t('feeTotalPending');
+        $('feeTotalUsd').textContent = mix.serviceFeeKnown ? formatFeeUsd(mix.totalUsd) : '—';
+        for (const warning of mix.warnings) warnings.add(warning);
+      } catch (e) {
+        mixError = ['feeAmountInvalid', 'feeInvalidAmount'].includes(e.message) || e.code === 'INVALID_ARGUMENT' ? 'feeAmountInvalid' : shortErr(e);
+        if (epoch !== feeRefreshEpoch) return;
+        for (const id of ['feeTornadoNative', 'feeTornadoUsd', 'feeTotalNative', 'feeTotalUsd']) $(id).textContent = '—';
+        $('feeRelayerService').textContent = t('feeServicePending');
+        $('feeRelayerNotice').hidden = false;
+      }
+    }
+    if (epoch !== feeRefreshEpoch) return;
+    const time = new Date().toLocaleTimeString(LANG === 'zh' ? 'zh-CN' : 'en-US');
+    $('feeEstimateStatus').textContent = mixError ? t(mixError) : t('feeUpdated', { time });
+    const messages = [t('feeReferenceOnly')];
+    if (mix) messages.push(previewAmount ? t('feeAmountScope', { amount: previewAmount, count: mix.noteCount }) :
+      t(mix.reference ? 'feeDefaultScope' : 'feeBatchScope', { count: mix.noteCount }));
+    for (const warning of warnings) {
+      if (warning !== 'feeReference') messages.push(t(warning));
+    }
+    if (price.usd != null && price.updatedAt) messages.push(t('feeSource', {
+      source: price.source, symbol: chain.symbol,
+      rate: new Intl.NumberFormat(LANG === 'zh' ? 'zh-CN' : 'en-US', { maximumFractionDigits: 6 }).format(price.usd),
+      time: new Date(price.updatedAt).toLocaleTimeString(LANG === 'zh' ? 'zh-CN' : 'en-US'),
+    }));
+    $('feeEstimateNote').textContent = [...new Set(messages)].join(' ');
+  } catch (e) {
+    if (epoch !== feeRefreshEpoch) return;
+    clearFeeValues();
+    $('feeEstimateStatus').textContent = t('feeFailed', { err: t(shortErr(e)) });
+    feeProvider = null;
+    feeProviderKey = '';
+  } finally {
+    feeRequestsRunning--;
+  }
 }
 
 function showSetup() {
@@ -417,12 +646,7 @@ function showSetup() {
   $('dest').value = '';
   $('customToken').value = '';
   renderHistory();
-  refreshFee();
-}
-
-function gasModeText(s) {
-  if (s.asset === 'native') return t('gasModeNative');
-  return t(gasWallet ? 'gasModeWallet' : 'gasModeSelf');
+  scheduleFeeEstimate();
 }
 
 function showSession() {
@@ -440,6 +664,10 @@ function showSession() {
   $('pk').hidden = true;
   $('pk').textContent = '';
   $('reveal').textContent = t('showKey');
+  $('mixBackupText').hidden = true;
+  $('mixBackupText').textContent = '';
+  $('mixSecondBalance').textContent = '—';
+  renderMix(s);
   const qr = qrcode(0, 'M');
   qr.addData(s.address);
   qr.make();
@@ -448,7 +676,7 @@ function showSession() {
   renderPhase(s);
   renderHistory();
   startLoop();
-  refreshFee();
+  scheduleFeeEstimate(0);
 }
 
 function renderHistory() {
@@ -491,8 +719,13 @@ function paintHistBalance(el, h) {
   if (b.failed) { el.textContent = t('histBalance', { text: t('histFailed') }); return; }
   let text = fmt(b.native, 18) + ' ' + chain.symbol;
   if (h.asset !== 'native') text = fmt(b.token, h.decimals) + ' ' + h.assetSymbol + '  |  ' + text;
+  if (h.secondWallet) {
+    let secondText = fmt(b.secondNative || 0n, 18) + ' ' + chain.symbol;
+    if (h.asset !== 'native') secondText = fmt(b.secondToken || 0n, h.decimals) + ' ' + h.assetSymbol + ' | ' + secondText;
+    text += ' | ' + t('histSecondWallet') + ': ' + secondText;
+  }
   el.textContent = t('histBalance', { text });
-  if (b.native > 0n || b.token > 0n) {
+  if (b.native > 0n || b.token > 0n || (b.secondNative || 0n) > 0n || (b.secondToken || 0n) > 0n) {
     el.classList.add('has-funds');
     const tag = document.createElement('span');
     tag.className = 'tag';
@@ -524,7 +757,10 @@ async function refreshHistoryBalances() {
       const native = await withTimeout(p.getBalance(h.address), 15000);
       const token = h.asset === 'native' ? 0n
         : await withTimeout(new ethers.Contract(h.asset, ERC20_ABI, p).balanceOf(h.address), 15000);
-      result = { native, token };
+      const secondNative = h.secondWallet ? await withTimeout(p.getBalance(h.secondWallet.address), 15000) : 0n;
+      const secondToken = h.secondWallet && h.asset !== 'native'
+        ? await withTimeout(new ethers.Contract(h.asset, ERC20_ABI, p).balanceOf(h.secondWallet.address), 15000) : 0n;
+      result = { native, token, secondNative, secondToken };
     } catch {
       result = { failed: true };
     }
@@ -538,7 +774,7 @@ async function refreshHistoryBalances() {
 async function archiveActive() {
   if (!active) return;
   history.push(active);
-  histBal.delete(active.id); // 重新查询它的余额
+  histBal.delete(active.id);
   active = null;
   provider = null;
   await saveHistory();
@@ -546,6 +782,7 @@ async function archiveActive() {
 }
 
 async function restore(id) {
+  if (busy || securityBusy) return setStatus(t('mixBusy'), 'warn');
   const h = history.find((x) => x.id === id);
   if (!h) return;
   stopLoop();
@@ -558,6 +795,7 @@ async function restore(id) {
 }
 
 async function onStart() {
+  if (busy || securityBusy || !appReady) return;
   const err = $('setupError');
   const fail = (m) => { err.textContent = m; err.hidden = false; };
   err.hidden = true;
@@ -595,6 +833,25 @@ async function onStart() {
       } catch {
         return fail(t('eTokenRead', { chain: chain.name }));
       }
+    }
+    if ($('mixMode').checked) {
+      if (!canUseMix(chain.id, s.asset)) {
+        updateMixAvailability();
+        return fail(t('mixUnsupported'));
+      }
+      const relayer = $('mixRelayer').value.trim();
+      if (relayer) {
+        const url = new URL(relayer);
+        if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) {
+          return fail(t('mixBadRelayer'));
+        }
+        if (url.username || url.password || url.search || url.hash) return fail(t('mixBadRelayer'));
+      }
+      await TornadoCrypto.ready();
+      s.mode = 'tornado';
+      s.relayerUrl = relayer;
+      const second = ethers.Wallet.createRandom();
+      s.secondWallet = { address: second.address, privateKey: second.privateKey };
     }
     const w = ethers.Wallet.createRandom(); // 全新随机私钥，仅用于本次
     if (w.address === dest) return fail(t('eDestOdd'));
@@ -644,10 +901,12 @@ async function refreshGasBalance() {
 }
 
 async function setGasWallet(w) {
+  if (securityBusy) { $('gasError').textContent = t('mixBusy'); $('gasError').hidden = false; return; }
   gasWallet = w ? { privateKey: w.privateKey, address: w.address } : null;
   await persist();
   renderGas();
-  if (active) $('gasMode').textContent = gasModeText(active); // 绑定/删除后立即反映在会话页
+  if (active) $('gasMode').textContent = gasModeText(active);
+  scheduleFeeEstimate();
 }
 
 async function onSaveGas() {
@@ -664,6 +923,7 @@ async function onSaveGas() {
 }
 
 async function onReset() {
+  if (busy || securityBusy) return setStatus(t('mixBusy'), 'warn');
   if (active && active.phase !== 'done' &&
       !confirm(t('cReset'))) return;
   stopLoop();
@@ -677,6 +937,24 @@ async function init() {
   applyI18n();
   for (const c of CHAINS) $('chain').add(new Option(`${c.name} (${c.symbol})`, c.id));
   fillAssets();
+  $('mixMode').onchange = updateMixAvailability;
+  $('customToken').oninput = updateMixAvailability;
+  $('feeAmount').oninput = () => scheduleFeeEstimate();
+  $('dest').oninput = () => scheduleFeeEstimate();
+  $('rpc').oninput = () => scheduleFeeEstimate();
+  $('refreshFees').onclick = () => refreshFeeEstimate(true);
+  $('mixBackup').onclick = async () => {
+    if (!active || active.mode !== 'tornado') return;
+    if (!(await reauth())) return;
+    const backup = { format: 'relay-wallet-tornado-backup-v1', exportedAt: new Date().toISOString(), session: active };
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'relay-wallet-backup-' + active.id + '.json';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  };
   $('lang').onclick = async () => {
     LANG = LANG === 'zh' ? 'en' : 'zh';
     await store.set('lang', LANG);
@@ -686,6 +964,7 @@ async function init() {
     fillAssets();
     $('asset').value = asset;
     $('customTokenRow').hidden = asset !== 'custom';
+    updateMixAvailability();
     renderGas();
     renderHistory();
     renderSecurity();
@@ -698,11 +977,8 @@ async function init() {
       renderTxs(active);
       renderPhase(active);
     }
-    refreshFee();
   };
-  $('chain').onchange = () => { fillAssets(); refreshGasBalance(); refreshFee(); };
-  $('refreshFee').onclick = refreshFee;
-  $('rpc').onchange = refreshFee;
+  $('chain').onchange = () => { fillAssets(); refreshGasBalance(); };
   $('saveGas').onclick = onSaveGas;
   $('genGas').onclick = () => setGasWallet(ethers.Wallet.createRandom());
   $('refreshGas').onclick = refreshGasBalance;
@@ -722,7 +998,7 @@ async function init() {
     if (!confirm(t('cRemoveGas'))) return;
     await setGasWallet(null);
   };
-  $('asset').onchange = () => { $('customTokenRow').hidden = $('asset').value !== 'custom'; refreshFee(); };
+  $('asset').onchange = () => { $('customTokenRow').hidden = $('asset').value !== 'custom'; updateMixAvailability(); };
   $('start').onclick = onStart;
   $('reset').onclick = onReset;
   $('copy').onclick = async () => {
@@ -746,7 +1022,6 @@ async function init() {
 
   $('refreshHistory').onclick = refreshHistoryBalances;
   bindSecurity();
-
   vault.meta = (await store.get('vaultMeta')) || null;
   if (vault.enabled) {
     showLock();
@@ -754,12 +1029,13 @@ async function init() {
     gasWallet = (await store.get('gasWallet')) || null;
     history = (await store.get('history')) || [];
     active = (await store.get('active')) || null;
-    // 新安装（没有任何数据）必须先设置加密；旧版本留下明文数据的可以继续用，但会提示开启加密。
     if (active || history.length || gasWallet) await startApp(); else showOnboard();
   }
+  setInterval(() => { if (appReady && !feeRequestsRunning) refreshFeeEstimate(); }, 60000);
 }
 
 function showOnboard() {
+  appReady = false;
   $('appBody').hidden = true;
   $('lock').hidden = true;
   $('secBox').hidden = false;
@@ -769,12 +1045,13 @@ function showOnboard() {
 
 // 数据就绪（未加密，或已解锁）后进入主界面
 async function startApp() {
+  appReady = true;
   $('lock').hidden = true;
   $('appBody').hidden = false;
   $('secBox').hidden = false;
   $('secIntro').hidden = true;
   // 重启程序：上次已完成则直接开始新一轮；未完成的会话继续监听，避免资金滞留。
-  if (active && active.phase === 'done') await archiveActive();
+  if (active && active.phase === 'done' && active.mode !== 'tornado') await archiveActive();
   if (active) showSession(); else showSetup();
   renderGas();
   renderSecurity();
@@ -784,6 +1061,10 @@ async function startApp() {
 const PLAIN_KEYS = ['active', 'history', 'gasWallet'];
 
 function showLock() {
+  appReady = false;
+  stopLoop();
+  clearTimeout(feeRefreshTimer);
+  feeRefreshEpoch++;
   $('appBody').hidden = true;
   $('secBox').hidden = true;
   $('lock').hidden = false;
@@ -793,6 +1074,8 @@ function showLock() {
 }
 
 async function unlock(method) {
+  if (securityBusy || appReady) return;
+  securityBusy = true;
   const err = $('lockError');
   err.hidden = true;
   try {
@@ -808,6 +1091,8 @@ async function unlock(method) {
     err.textContent = e.code === 'BAD_SECRET' ? t('eLockBad')
       : e.code === 'PRF_UNSUPPORTED' ? t('eSecNoPrf') : t('eLockFailed', { err: shortErr(e) });
     err.hidden = false;
+  } finally {
+    securityBusy = false;
   }
 }
 
@@ -828,9 +1113,12 @@ function renderSecurity() {
 async function secureWith(method, password) {
   const err = $('secError');
   err.hidden = true;
+  if (busy || securityBusy) { err.textContent = t('mixBusy'); err.hidden = false; return; }
+  securityBusy = true;
   try {
     if (method === 'passkey' && !vaultPasskeySupported()) throw Object.assign(new Error('no passkey'), { code: 'NO_PASSKEY' });
     if (vault.enabled) {
+      if (!(await reauth())) return;
       await store.set('vaultMeta', await vaultAddMethod(method, password));
     } else {
       const meta = await vaultCreate(method, password); // 此后 persist() 写的是密文
@@ -843,10 +1131,14 @@ async function secureWith(method, password) {
     $('secPwForm').hidden = true;
     if ($('appBody').hidden) await startApp(); // 首次设置完成，进入主界面
   } catch (e) {
-    if (!(await store.get('vaultMeta'))) vaultForget(); // 开启到一半失败：保持未加密状态
+    const savedMeta = await store.get('vaultMeta');
+    if (!savedMeta) vaultForget(); // 开启到一半失败：保持未加密状态
+    else vault.meta = savedMeta;
     err.textContent = e.code === 'NO_PASSKEY' ? t('eSecNoPasskey')
       : e.code === 'PRF_UNSUPPORTED' ? t('eSecNoPrf') : t('eSecFailed', { err: shortErr(e) });
     err.hidden = false;
+  } finally {
+    securityBusy = false;
   }
   renderSecurity();
 }
@@ -908,4 +1200,26 @@ function bindSecurity() {
   };
 }
 
-init();
+
+async function boot() {
+  applyI18n();
+  // Hold ownership for the entire page lifetime. Serializing only individual
+  // ticks would let a second page write a stale copy of the private journal.
+  if (!navigator.locks) throw new Error(t('mixLockUnavailable'));
+  await navigator.locks.request('relay-wallet-page-owner', { ifAvailable: true }, async (lock) => {
+    if (!lock) {
+      $('ownerError').hidden = false;
+      $('ownerError').textContent = t('mixOtherPage');
+      for (const el of document.querySelectorAll('button,input,select')) el.disabled = true;
+      return;
+    }
+    await init();
+    await new Promise(() => {}); // The browser releases the lock on page close.
+  });
+}
+
+boot().catch((error) => {
+  $('ownerError').textContent = shortErr(error);
+  $('ownerError').hidden = false;
+  $('start').disabled = true;
+});

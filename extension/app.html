@@ -30,6 +30,8 @@
     <p id="lockError" class="error" hidden></p>
   </section>
 
+  <section id="ownerError" class="card error" role="alert" hidden></section>
+
   <div id="appBody" hidden>
   <!-- Step 1: setup -->
   <section id="setup" class="card">
@@ -45,15 +47,26 @@
     <label><span data-i18n="dest"></span>
       <input id="dest" placeholder="0x…" spellcheck="false" autocomplete="off">
     </label>
+    <div id="mixOption" class="mix-option" hidden>
+      <label class="mix-toggle" for="mixMode">
+        <input id="mixMode" type="checkbox" role="switch" aria-describedby="mixModeHint" disabled>
+        <span data-i18n="mixMode"></span>
+      </label>
+      <p id="mixModeHint" class="hint" data-i18n="mixModeHint"></p>
+      <a href="https://tornadocash.eth.limo/" target="_blank" rel="noopener noreferrer" data-i18n="mixWebsite"></a>
+    </div>
     <details>
       <summary data-i18n="advanced"></summary>
       <label><span data-i18n="rpcLabel"></span>
         <input id="rpc" placeholder="https://…" spellcheck="false" autocomplete="off">
       </label>
+      <div id="mixRelayerOptions" hidden>
+        <label><span data-i18n="mixRelayerLabel"></span>
+          <input id="mixRelayer" type="url" placeholder="https://…" spellcheck="false" autocomplete="off">
+        </label>
+        <p class="hint small-note" data-i18n="mixRelayerHint"></p>
+      </div>
     </details>
-    <p class="hint fee"><span data-i18n="feeLabel"></span> <b id="feeEst">—</b>
-      <button id="refreshFee" class="ghost small" data-i18n="refresh"></button><br>
-      <small data-i18n="feeNote"></small></p>
     <p id="setupError" class="error" hidden></p>
     <button id="start" class="primary" data-i18n="start"></button>
   </section>
@@ -78,9 +91,26 @@
       <dt data-i18n="factAsset"></dt><dd id="assetName"></dd>
       <dt data-i18n="factGas"></dt><dd id="gasMode"></dd>
       <dt data-i18n="factDest"></dt><dd><code id="destShow"></code></dd>
-      <dt data-i18n="feeLabel"></dt><dd id="feeEstS">—</dd>
       <dt data-i18n="factBalance"></dt><dd id="balances">—</dd>
     </dl>
+
+    <section id="mixProgress" class="mix-progress" aria-labelledby="mixProgressTitle" hidden>
+      <h2 id="mixProgressTitle" data-i18n="mixProgressTitle"></h2>
+      <ol id="mixSteps" class="mix-steps" aria-live="polite"></ol>
+      <dl class="facts">
+        <dt data-i18n="mixSecondAddressLabel"></dt><dd><code id="mixSecondAddress">—</code></dd>
+        <dt data-i18n="mixSecondBalanceLabel"></dt><dd id="mixSecondBalance">—</dd>
+        <dt data-i18n="mixRemainderLabel"></dt><dd id="mixRemainder">—</dd>
+        <dt data-i18n="mixCountsLabel"></dt><dd id="mixCounts">—</dd>
+      </dl>
+      <p class="hint small-note" data-i18n="mixFundsHint"></p>
+      <details>
+        <summary data-i18n="mixBackupTitle"></summary>
+        <p class="warn" data-i18n="mixBackupHint"></p>
+        <button id="mixBackup" class="ghost" data-i18n="mixBackup"></button>
+        <code id="mixBackupText" class="pk mix-backup" hidden></code>
+      </details>
+    </section>
 
     <ul id="txs" class="txs"></ul>
 
@@ -90,6 +120,44 @@
       <button id="reveal" class="ghost"></button>
       <code id="pk" class="pk" hidden></code>
     </details>
+  </section>
+
+  <section id="feeEstimate" class="card fee-estimate" aria-labelledby="feeEstimateTitle">
+    <div class="row between">
+      <h2 id="feeEstimateTitle" data-i18n="feeEstimateTitle"></h2>
+      <button id="refreshFees" class="ghost small" data-i18n="feeRefresh"></button>
+    </div>
+    <div id="feeAmountRow" class="fee-amount-input" hidden>
+      <label for="feeAmount"><span data-i18n="feeAmountLabel"></span>
+        <input id="feeAmount" type="text" inputmode="decimal" placeholder="0.1" autocomplete="off" spellcheck="false" aria-describedby="feeAmountHint">
+      </label>
+      <p id="feeAmountHint" class="hint small-note" data-i18n="feeAmountHint"></p>
+    </div>
+    <p id="feeEstimateStatus" class="hint small-note" role="status" aria-live="polite" data-i18n="feeLoading"></p>
+    <dl class="fee-breakdown">
+      <div class="fee-line">
+        <dt data-i18n="feeNormalGasLabel"></dt>
+        <dd><span id="feeNormalNative" class="fee-native">—</span><span id="feeNormalUsd" class="fee-usd">—</span></dd>
+      </div>
+    </dl>
+    <div id="feeTornadoRow" class="fee-tornado" hidden>
+      <dl class="fee-breakdown">
+        <div class="fee-line">
+          <dt data-i18n="feeTornadoGasLabel"></dt>
+          <dd><span id="feeTornadoNative" class="fee-native">—</span><span id="feeTornadoUsd" class="fee-usd">—</span></dd>
+        </div>
+        <div class="fee-line">
+          <dt data-i18n="feeRelayerServiceLabel"></dt>
+          <dd id="feeRelayerService" class="fee-pending" data-i18n="feeServicePending"></dd>
+        </div>
+        <div id="feeTornadoTotal" class="fee-line fee-total">
+          <dt data-i18n="feeTotalLabel"></dt>
+          <dd><span id="feeTotalNative" class="fee-native">—</span><span id="feeTotalUsd" class="fee-usd">—</span></dd>
+        </div>
+      </dl>
+      <p id="feeRelayerNotice" class="hint small-note fee-relayer-notice" data-i18n="feeRelayerNotice"></p>
+    </div>
+    <p id="feeEstimateNote" class="hint small-note" data-i18n="feeReferenceOnly"></p>
   </section>
 
   <section id="gasBox" class="card">
@@ -176,6 +244,12 @@
 <script src="vendor/qrcode.js"></script>
 <script src="chains.js"></script>
 <script src="i18n.js"></script>
+<script src="tornado-pools.js"></script>
+<script src="vendor/tornado/crypto.js"></script>
+<script src="tornado-relayer.js"></script>
+<script src="tornado-flow.js"></script>
+<script src="tornado-adapter.js"></script>
+<script src="fee-estimator.js"></script>
 <script src="vault.js"></script>
 <script src="app.js"></script>
 </body>

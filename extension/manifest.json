@@ -1,11 +1,26 @@
 {
   "manifest_version": 3,
   "name": "__MSG_extName__",
-  "version": "1.3.0",
+  "version": "2.1.0",
+  "version_name": "2.1.0-beta",
   "description": "__MSG_extDesc__",
   "default_locale": "en",
-  "permissions": ["storage"],
-  "host_permissions": ["https://*/*", "http://127.0.0.1/*", "http://localhost/*"],
-  "background": { "service_worker": "background.js" },
-  "action": { "default_title": "__MSG_extAction__" }
+  "permissions": [
+    "storage",
+    "unlimitedStorage"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; worker-src 'self'"
+  },
+  "host_permissions": [
+    "https://*/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "__MSG_extAction__"
+  }
 }
