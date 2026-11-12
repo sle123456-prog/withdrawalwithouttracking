@@ -6,6 +6,7 @@ name: Release
 on:
   push:
     tags: ['v*']
+    branches: ['release/v2.1.0-beta']
   workflow_dispatch:
 
 permissions:
@@ -34,7 +35,9 @@ jobs:
           echo "TAG=v$version" >> "$GITHUB_ENV"
 
       - name: Package extension
-        run: zip -qr "relay-wallet-extension-$TAG.zip" extension
+        run: |
+          zip -qr "relay-wallet-extension-$TAG.zip" extension
+          sha256sum "relay-wallet-extension-$TAG.zip" > "relay-wallet-extension-$TAG.sha256"
 
       - name: Publish release
         env:
@@ -42,6 +45,16 @@ jobs:
         run: |
           cat > notes.md <<'NOTES'
           Chrome extension that generates a one-time EVM relay address for each exchange withdrawal and forwards received funds to your destination address.
+
+          ## 2.1.0-beta
+
+          - ETH-only Tornado Cash mode on Ethereum, Optimism and Arbitrum: exchange → first one-time wallet → Tornado Cash → second wallet → B. The whole batch must be confirmed before forwarding to B; the remainder stays in the first wallet.
+          - Separate ordinary-transfer and Tornado gas estimates in native coin and USD. Relayer fees are quoted only when preparing a funded deposit.
+          - Optional gas wallet, manual gas top-ups, and historical balances for both Tornado wallets.
+          - Password / Passkey encryption, locked-page pause, legacy-data migration, and verification before showing keys, exporting full backups or adding an unlock method.
+          - 86 Node tests and the actual Chromium MV3 extension checks passed. No live mainnet funds were used in testing.
+
+          中文：本次包含 Tornado 双钱包模式、普通与 Tornado 费用预估、可选 Gas 钱包、历史余额和密码 / Passkey 加密。新安装需先设置加密；升级后首次打开需解锁。Tornado 仅支持 ETH，存款金额为 0.1 ETH 整倍数，另需 Gas。Gas 成本极高，小额慎用，小白禁用。导出备份为明文，请妥善保管。
 
           ## Install
 
@@ -56,5 +69,5 @@ jobs:
           sed -i 's/^          //' notes.md
           extra=()
           if [[ "$TAG" == *-* ]]; then extra+=(--prerelease); fi
-          gh release create "$TAG" "relay-wallet-extension-$TAG.zip" \
+          gh release create "$TAG" "relay-wallet-extension-$TAG.zip" "relay-wallet-extension-$TAG.sha256" \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$TAG" --notes-file notes.md "${extra[@]}"
