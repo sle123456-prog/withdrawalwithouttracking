@@ -97,7 +97,7 @@ Once encrypted:
 - Adding an unlock method also requires verification with an existing method. Encryption cannot be turned off once it is on.
 - Encryption protects the data at rest on disk. While the page is unlocked the keys are in memory, so it does not protect against malware that already controls your browser.
 
-**Upgrading from 1.2.x or earlier**: existing plain-text data is kept and the app keeps working, but the page shows that it is not encrypted yet, and private keys cannot be shown and full backups cannot be exported until encryption is turned on. Turning it on deletes the plain-text copies.
+**Upgrading from 1.2.x, earlier versions or an unencrypted beta**: existing plain-text data is kept and the app keeps working, but the page shows that it is not encrypted yet, and private keys cannot be shown and full backups cannot be exported until encryption is turned on. Turning it on deletes the plain-text copies.
 
 Both Tornado wallet keys, notes, transaction journals and previous `mixHistory` batches are encrypted together. Past-address balances also show the second wallet. Exported backups remain plain text and need safe storage.
 

@@ -239,7 +239,7 @@ const I18N = {
     ePk: '私钥格式不对：应为 64 位十六进制（可带 0x 前缀）。',
     cReset: '当前地址还没有完成转出。重置后将停止监听它（可在“历史地址”里恢复）。确定重置？',
     cRemoveGas: '删除后私钥将从本机移除。如果钱包里还有余额，请先确认已备份私钥。确定删除？',
-    cClear: "清空后旧地址的私钥将被永久删除。这些地址上留存的剩余 gas（原生币），以及之后打到这些地址的资金，都将无法取回。如需取回，请先在“历史地址”里恢复对应地址，或导出私钥自行转走。确定清空？",
+    cClear: "清空后旧地址的私钥、Tornado 第二钱包及存款凭证将被永久删除。请先导出完整备份，未提取的 Tornado 资金需要存款凭证才能取回。这些地址上留存的剩余 gas（原生币），以及之后打到这些地址的资金，都将无法取回。如需取回，请先在“历史地址”里恢复对应地址，或导出私钥自行转走。确定清空？",
   },
   en: {
     gasModeSelf: "One-time address (no gas wallet bound; top up native coin manually if short)",
@@ -479,7 +479,7 @@ const I18N = {
     ePk: 'Invalid private key: expected 64 hex characters (0x prefix optional).',
     cReset: 'This address has not finished forwarding. After a reset it is no longer watched (you can restore it under “Past addresses”). Reset anyway?',
     cRemoveGas: 'The private key will be removed from this device. If the wallet still has a balance, make sure you have backed up the key. Delete?',
-    cClear: "The private keys of old addresses will be permanently deleted. Any leftover gas (native coin) still on those addresses, and any funds sent to them later, cannot be recovered. To recover it, first restore the address under “Past addresses” or export its private key and move the funds yourself. Clear?",
+    cClear: "Old-address private keys, Tornado second wallets and deposit notes will be permanently deleted. Export a full backup first: unwithdrawn Tornado funds require their deposit notes. Any leftover gas (native coin) still on those addresses, and any funds sent to them later, cannot be recovered. To recover it, first restore the address under “Past addresses” or export its private key and move the funds yourself. Clear?",
   },
 };
 
