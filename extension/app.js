@@ -542,7 +542,10 @@ async function onStart() {
       }
     }
     if ($('mixMode').checked) {
-      if (!canUseMix(chain.id, s.asset)) return fail(t('mixUnsupported'));
+      if (!canUseMix(chain.id, s.asset)) {
+        updateMixAvailability();
+        return fail(t('mixUnsupported'));
+      }
       const relayer = $('mixRelayer').value.trim();
       if (relayer) {
         const url = new URL(relayer);
