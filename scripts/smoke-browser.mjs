@@ -86,8 +86,9 @@ try {
   assert.match(await page.locator('#mixModeHint').innerText(), /0\.1 ETH/);
   assert.match(await page.locator('#mixModeHint').innerText(), /Gas costs are very high|Gas 成本极高/);
   assert.match(await page.locator('#mixModeHint').innerText(), /not for beginners|小白禁用/);
-  assert.match(await page.locator('#feeRelayerService').innerText(), /Awaiting|待/);
-  assert.match(await page.locator('#feeTotalNative').innerText(), /Awaiting|待|—/);
+  assert.match(await page.locator('#feeRelayerService').innerText(), /Not quoted yet|未取得报价/);
+  assert.match(await page.locator('#feeTotalNative').innerText(), /Total unavailable|暂不能计算总额/);
+  assert.match(await page.locator('#feeEstimateNote').innerText(), /before funding does not request|入金前等待或刷新费用不会/);
   assert.equal(await page.locator('#feeAmount').isVisible(), true);
   const feeValue = async () => Number((await page.locator('#feeTornadoNative').innerText()).replace(/[^\d.]/g, ''));
   const oneDepositFee = await feeValue();

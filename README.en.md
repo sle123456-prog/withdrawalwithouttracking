@@ -22,6 +22,8 @@ The progress view shows deposits, withdrawals, collection and forwarding. Notes 
 
 Ordinary transfers and Tornado network gas are shown separately in the chain's native coin and a reference USD value. Tornado service fees and the estimated total appear separately; the total remains pending until a relayer service-fee quote is known.
 
+This version does not query relayer rates before funding. A relayer is selected while preparing a deposit, after Tornado is enabled and confirmed funds cover the principal and gas. Waiting or refreshing the estimate before funding updates network gas and coin prices only; it does not request a relayer quote.
+
 Before funding, the default is one 0.1 ETH deposit. An optional expected mixing principal, in multiples of 0.1 ETH, previews the cost of multiple deposits without changing the actual transfer amount. An active session uses its actual batch plan. Budgets include margins and may differ from fees at execution. Tornado gas costs are very high: use caution for small amounts; this feature is not suitable for beginners.
 
 Gas prices come from the selected RPC. USD uses native-coin reference prices from [CoinGecko](https://docs.coingecko.com/demo/reference/simple-price) or [DefiLlama](https://docs.llama.fi/list-your-project/how-to-request-token-pricing). Price requests contain coin identifiers, never wallet addresses, private keys or notes. If price services fail, native-coin estimates remain available with a dated cache or an unavailable USD label. Missing L2 data fees are marked incomplete. Estimates refresh periodically and can be refreshed manually.
