@@ -296,10 +296,8 @@ try {
   await page.locator('#secPw2').fill(password);
   await page.waitForFunction(() => !busy);
   await page.locator('#secPwSave').click();
-  await page.waitForFunction(async () => {
-    const data = await chrome.storage.local.get(null);
-    return !!data.vaultMeta && data.active === undefined && !securityBusy;
-  });
+  // Playwright 1.56 polls synchronous predicates; a returned Promise is already truthy.
+  await page.waitForFunction(() => vault.enabled && !securityBusy && document.getElementById('secPwForm').hidden);
   const migrated = await readData();
   assert.equal(migrated.active.secondWallet.privateKey, legacy.secondWallet.privateKey);
   assert.deepEqual(migrated.active.mixHistory, legacy.mixHistory);
