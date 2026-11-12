@@ -1,5 +1,6 @@
 /* global ethers, qrcode, CHAINS, chrome, t, applyI18n, LANG:writable,
- TornadoPools, TornadoCrypto, TornadoRelayer, TornadoFlow, TornadoAdapter, FeeEstimator */
+ TornadoPools, TornadoCrypto, TornadoRelayer, TornadoFlow, TornadoAdapter, FeeEstimator,
+ vault, vaultCreate, vaultAddMethod, vaultUnlock, vaultVerify, vaultSeal, vaultOpen, vaultForget, vaultPasskeySupported */
 'use strict';
 
 const POLL_MS = 6000;
@@ -27,6 +28,10 @@ const store = {
     if (hasChromeStorage) return chrome.storage.local.set({ [key]: value });
     localStorage.setItem(key, JSON.stringify(value));
   },
+  async remove(key) {
+    if (hasChromeStorage) return chrome.storage.local.remove(key);
+    localStorage.removeItem(key);
+  },
 };
 
 let active = null; // 当前会话
@@ -46,15 +51,40 @@ let feeRefreshEpoch = 0;
 let feeRequestsRunning = 0;
 let feeSessionFingerprint = '';
 
-const saveActive = () => store.set('active', active);
-const saveHistory = () => store.set('history', history);
+let securityBusy = false;
+let appReady = false;
+let persistChain = Promise.resolve();
+function persist() {
+  const snapshot = JSON.parse(JSON.stringify({ active, history, gasWallet }));
+  persistChain = persistChain.catch(() => {}).then(async () => {
+    if (vault.enabled) {
+      if (!vault.unlocked) throw new Error('locked');
+      await store.set('vaultData', await vaultSeal(snapshot));
+    } else {
+      await store.set('active', snapshot.active);
+      await store.set('history', snapshot.history);
+      await store.set('gasWallet', snapshot.gasWallet);
+    }
+  });
+  return persistChain;
+}
+const saveActive = persist;
+const saveHistory = persist;
 
 // ---------- 链访问 ----------
+const rpcKey = (s) => s.chainId + '|' + (s.rpc ? [s.rpc] : chainById(s.chainId).rpcs).join(',');
+
 async function getProvider(s) {
+  const key = rpcKey(s);
+  if (provider && providerKey === key) return provider;
+  provider = await openProvider(s);
+  providerKey = key;
+  return provider;
+}
+
+async function openProvider(s) {
   const chain = chainById(s.chainId);
   const urls = s.rpc ? [s.rpc] : chain.rpcs;
-  const key = s.chainId + '|' + urls.join(',');
-  if (provider && providerKey === key) return provider;
   let lastErr;
   for (const url of urls) {
     try {
@@ -64,8 +94,6 @@ async function getProvider(s) {
         p.destroy();
         throw new Error(t('eChainId', { got: String(net.chainId), chain: chain.name, id: chain.id }));
       }
-      provider = p;
-      providerKey = key;
       return p;
     } catch (e) {
       lastErr = e;
@@ -185,7 +213,7 @@ async function fundGas(s, p, amount) {
 
 // ---------- 主循环 ----------
 async function tickUnlocked() {
-  if (!active || busy) return;
+  if (!active || busy || securityBusy || !appReady) return;
   busy = true;
   const s = active;
   try {
@@ -208,7 +236,7 @@ async function tickUnlocked() {
       }
       const save = async () => {
         if (active !== s) throw new Error(t('mixSessionChanged'));
-        await store.set('active', s);
+        await persist();
         renderMix(s);
         const fingerprint = s.id + '|' + (s.mix?.round || 1) + '|' +
           (s.mix?.plan || []).map((entry) => entry.amount).join(',') + '|' +
@@ -272,11 +300,13 @@ async function tickUnlocked() {
         addTx(s, r.hash, 'txForward', { amount: fmt(tokenBal, s.decimals), symbol: s.assetSymbol });
         s.phase = 'done';
         delete s.needGas;
-        try { // 剩余的 gas：垫付过则退回 Gas 钱包，否则一并转给 B
-          const back = s.gasFunded && gasWallet;
-          const r2 = await sweepNative(s, p, wallet, back ? gasWallet.address : s.dest);
-          if (r2) addTx(s, r2.hash, back ? 'txLeftGas' : 'txLeftB', { amount: fmt(r2.value, 18), symbol: chain.symbol });
-        } catch (e) { console.warn('sweep leftover failed', e); }
+        // 剩余的 gas：Gas 钱包垫付过则退回 Gas 钱包；否则留在一次性地址，不转给 B
+        if (s.gasFunded && gasWallet) {
+          try {
+            const r2 = await sweepNative(s, p, wallet, gasWallet.address);
+            if (r2) addTx(s, r2.hash, 'txLeftGas', { amount: fmt(r2.value, 18), symbol: chain.symbol });
+          } catch (e) { console.warn('sweep leftover failed', e); }
+        }
       }
     }
     await saveActive();
@@ -426,6 +456,11 @@ function fillAssets() {
   updateMixAvailability();
 }
 
+function gasModeText(s) {
+  if (s.asset === 'native') return t('gasModeNative');
+  return t(gasWallet ? 'gasModeWallet' : 'gasModeSelf');
+}
+
 function canUseMix(chainId, asset) {
   const chain = chainById(chainId);
   return asset === 'native' && chain?.symbol === 'ETH' &&
@@ -468,6 +503,7 @@ function clearFeeValues() {
 }
 
 function scheduleFeeEstimate(delay = 600) {
+  if (!appReady) return;
   clearTimeout(feeRefreshTimer);
   const epoch = ++feeRefreshEpoch;
   updateFeeVisibility();
@@ -511,6 +547,7 @@ function formatFeeUsd(value) {
 }
 
 async function refreshFeeEstimate(forcePrice = false, scheduledEpoch) {
+  if (!appReady) return;
   clearTimeout(feeRefreshTimer);
   const epoch = scheduledEpoch ?? ++feeRefreshEpoch;
   if (epoch !== feeRefreshEpoch) return;
@@ -530,7 +567,7 @@ async function refreshFeeEstimate(forcePrice = false, scheduledEpoch) {
     const gasPriceWei = String(await getGasPrice(p));
     const base = { chain, provider: p, asset, dest: ethers.isAddress(dest) ? dest : undefined,
       sourceAddress: s?.address, secondAddress: s?.secondWallet?.address, gasWalletAddress: gasWallet?.address,
-      gasPriceWei, estimateL1Fee: estimateL1FeeStrict, price };
+      gasPriceWei, includeReturn: !!gasWallet, estimateL1Fee: estimateL1FeeStrict, price };
     const normal = await feeEstimator.estimate({ ...base, mode: 'normal' });
     if (epoch !== feeRefreshEpoch) return;
     $('feeNormalNative').textContent = formatFeeNative(normal.networkWei, chain.symbol);
@@ -622,7 +659,7 @@ function showSession() {
   $('address').textContent = s.address;
   $('destShow').textContent = s.dest;
   $('assetName').textContent = s.assetSymbol + (s.asset === 'native' ? t('nativeSuffix') : ' (' + s.asset + ')');
-  $('gasMode').textContent = t(s.asset === 'native' ? 'gasModeNative' : 'gasModeWallet');
+  $('gasMode').textContent = gasModeText(s);
   $('balances').textContent = '—';
   $('pk').hidden = true;
   $('pk').textContent = '';
@@ -655,18 +692,89 @@ function renderHistory() {
     meta.className = 'meta';
     meta.textContent = `${chain.name} · ${h.assetSymbol} · ${new Date(h.createdAt).toLocaleString()} · ` +
       t(h.phase === 'done' ? 'done' : 'notDone') + ` · B: ${h.dest.slice(0, 8)}…${h.dest.slice(-6)}`;
+    const bal = document.createElement('div');
+    bal.className = 'bal';
+    bal.dataset.id = h.id;
+    paintHistBalance(bal, h);
     const btn = document.createElement('button');
     btn.className = 'ghost';
     btn.textContent = t('restore');
     btn.onclick = () => restore(h.id);
-    li.append(code, meta, btn);
+    li.append(code, meta, bal, btn);
     ul.append(li);
   });
+  if (history.some((h) => !histBal.has(h.id))) refreshHistoryBalances();
+}
+
+// ---------- 历史地址余额 ----------
+const histBal = new Map(); // 会话 id -> { native, token } | { failed: true } | { loading: true }
+let histSeq = 0;
+
+function paintHistBalance(el, h) {
+  const chain = chainById(h.chainId);
+  const b = histBal.get(h.id);
+  el.replaceChildren();
+  el.classList.remove('has-funds');
+  if (!b || b.loading) { el.textContent = t('histBalance', { text: t('histLoading') }); return; }
+  if (b.failed) { el.textContent = t('histBalance', { text: t('histFailed') }); return; }
+  let text = fmt(b.native, 18) + ' ' + chain.symbol;
+  if (h.asset !== 'native') text = fmt(b.token, h.decimals) + ' ' + h.assetSymbol + '  |  ' + text;
+  if (h.secondWallet) {
+    let secondText = fmt(b.secondNative || 0n, 18) + ' ' + chain.symbol;
+    if (h.asset !== 'native') secondText = fmt(b.secondToken || 0n, h.decimals) + ' ' + h.assetSymbol + ' | ' + secondText;
+    text += ' | ' + t('histSecondWallet') + ': ' + secondText;
+  }
+  el.textContent = t('histBalance', { text });
+  if (b.native > 0n || b.token > 0n || (b.secondNative || 0n) > 0n || (b.secondToken || 0n) > 0n) {
+    el.classList.add('has-funds');
+    const tag = document.createElement('span');
+    tag.className = 'tag';
+    tag.textContent = t('histHasFunds');
+    el.append(' ', tag);
+  }
+}
+
+const withTimeout = (promise, ms) => Promise.race([
+  promise, new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms)),
+]);
+
+// 查询所有历史地址的余额。单个地址失败只影响它自己那一行。
+async function refreshHistoryBalances() {
+  const seq = ++histSeq;
+  const items = history.slice();
+  const repaint = (h) => {
+    const el = [...document.querySelectorAll('#history .bal')].find((x) => x.dataset.id === h.id);
+    if (el) paintHistBalance(el, h);
+  };
+  for (const h of items) { histBal.set(h.id, { loading: true }); repaint(h); }
+  const conns = new Map(); // 同一条链 / RPC 共用一个连接
+  await Promise.all(items.map(async (h) => {
+    let result;
+    try {
+      const key = rpcKey(h);
+      if (!conns.has(key)) conns.set(key, withTimeout(openProvider(h), 15000));
+      const p = await conns.get(key);
+      const native = await withTimeout(p.getBalance(h.address), 15000);
+      const token = h.asset === 'native' ? 0n
+        : await withTimeout(new ethers.Contract(h.asset, ERC20_ABI, p).balanceOf(h.address), 15000);
+      const secondNative = h.secondWallet ? await withTimeout(p.getBalance(h.secondWallet.address), 15000) : 0n;
+      const secondToken = h.secondWallet && h.asset !== 'native'
+        ? await withTimeout(new ethers.Contract(h.asset, ERC20_ABI, p).balanceOf(h.secondWallet.address), 15000) : 0n;
+      result = { native, token, secondNative, secondToken };
+    } catch {
+      result = { failed: true };
+    }
+    if (seq !== histSeq) return;
+    histBal.set(h.id, result);
+    repaint(h);
+  }));
+  for (const c of conns.values()) c.then((p) => p.destroy()).catch(() => {});
 }
 
 async function archiveActive() {
   if (!active) return;
   history.push(active);
+  histBal.delete(active.id);
   active = null;
   provider = null;
   await saveHistory();
@@ -674,7 +782,7 @@ async function archiveActive() {
 }
 
 async function restore(id) {
-  if (busy) return setStatus(t('mixBusy'), 'warn');
+  if (busy || securityBusy) return setStatus(t('mixBusy'), 'warn');
   const h = history.find((x) => x.id === id);
   if (!h) return;
   stopLoop();
@@ -687,7 +795,7 @@ async function restore(id) {
 }
 
 async function onStart() {
-  if (busy) return;
+  if (busy || securityBusy || !appReady) return;
   const err = $('setupError');
   const fail = (m) => { err.textContent = m; err.hidden = false; };
   err.hidden = true;
@@ -715,7 +823,6 @@ async function onStart() {
       asset = raw;
     }
     if (asset !== 'native') {
-      if (!gasWallet) return fail(t('eNeedGasWallet'));
       s.asset = ethers.getAddress(asset);
       provider = null;
       const p = await getProvider(s);
@@ -794,9 +901,11 @@ async function refreshGasBalance() {
 }
 
 async function setGasWallet(w) {
+  if (securityBusy) { $('gasError').textContent = t('mixBusy'); $('gasError').hidden = false; return; }
   gasWallet = w ? { privateKey: w.privateKey, address: w.address } : null;
-  await store.set('gasWallet', gasWallet);
+  await persist();
   renderGas();
+  if (active) $('gasMode').textContent = gasModeText(active);
   scheduleFeeEstimate();
 }
 
@@ -814,7 +923,7 @@ async function onSaveGas() {
 }
 
 async function onReset() {
-  if (busy) return setStatus(t('mixBusy'), 'warn');
+  if (busy || securityBusy) return setStatus(t('mixBusy'), 'warn');
   if (active && active.phase !== 'done' &&
       !confirm(t('cReset'))) return;
   stopLoop();
@@ -834,8 +943,9 @@ async function init() {
   $('dest').oninput = () => scheduleFeeEstimate();
   $('rpc').oninput = () => scheduleFeeEstimate();
   $('refreshFees').onclick = () => refreshFeeEstimate(true);
-  $('mixBackup').onclick = () => {
+  $('mixBackup').onclick = async () => {
     if (!active || active.mode !== 'tornado') return;
+    if (!(await reauth())) return;
     const backup = { format: 'relay-wallet-tornado-backup-v1', exportedAt: new Date().toISOString(), session: active };
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -857,11 +967,12 @@ async function init() {
     updateMixAvailability();
     renderGas();
     renderHistory();
+    renderSecurity();
     if (active) {
       const chain = chainById(active.chainId);
       $('withdrawHint').textContent = t('withdrawHint', { net: chain.name });
       $('assetName').textContent = active.assetSymbol + (active.asset === 'native' ? t('nativeSuffix') : ' (' + active.asset + ')');
-      $('gasMode').textContent = t(active.asset === 'native' ? 'gasModeNative' : 'gasModeWallet');
+      $('gasMode').textContent = gasModeText(active);
       $('reveal').textContent = t($('pk').hidden ? 'showKey' : 'hideKey');
       renderTxs(active);
       renderPhase(active);
@@ -876,8 +987,9 @@ async function init() {
     $('copyGas').textContent = t('copied');
     setTimeout(() => { $('copyGas').textContent = t('copy'); }, 1500);
   };
-  $('revealGas').onclick = () => {
+  $('revealGas').onclick = async () => {
     const el = $('gasPkShow');
+    if (el.hidden && !(await reauth())) return;
     el.hidden = !el.hidden;
     el.textContent = el.hidden ? '' : gasWallet.privateKey;
     $('revealGas').textContent = t(el.hidden ? 'showKey' : 'hideKey');
@@ -894,8 +1006,9 @@ async function init() {
     $('copy').textContent = t('copied');
     setTimeout(() => { $('copy').textContent = t('copy'); }, 1500);
   };
-  $('reveal').onclick = () => {
+  $('reveal').onclick = async () => {
     const pk = $('pk');
+    if (pk.hidden && !(await reauth())) return;
     pk.hidden = !pk.hidden;
     pk.textContent = pk.hidden ? '' : active.privateKey;
     $('reveal').textContent = t(pk.hidden ? 'showKey' : 'hideKey');
@@ -907,15 +1020,186 @@ async function init() {
     renderHistory();
   };
 
-  gasWallet = (await store.get('gasWallet')) || null;
-  history = (await store.get('history')) || [];
-  active = (await store.get('active')) || null;
+  $('refreshHistory').onclick = refreshHistoryBalances;
+  bindSecurity();
+  vault.meta = (await store.get('vaultMeta')) || null;
+  if (vault.enabled) {
+    showLock();
+  } else {
+    gasWallet = (await store.get('gasWallet')) || null;
+    history = (await store.get('history')) || [];
+    active = (await store.get('active')) || null;
+    if (active || history.length || gasWallet) await startApp(); else showOnboard();
+  }
+  setInterval(() => { if (appReady && !feeRequestsRunning) refreshFeeEstimate(); }, 60000);
+}
+
+function showOnboard() {
+  appReady = false;
+  $('appBody').hidden = true;
+  $('lock').hidden = true;
+  $('secBox').hidden = false;
+  $('secIntro').hidden = false;
+  renderSecurity();
+}
+
+// 数据就绪（未加密，或已解锁）后进入主界面
+async function startApp() {
+  appReady = true;
+  $('lock').hidden = true;
+  $('appBody').hidden = false;
+  $('secBox').hidden = false;
+  $('secIntro').hidden = true;
   // 重启程序：上次已完成则直接开始新一轮；未完成的会话继续监听，避免资金滞留。
   if (active && active.phase === 'done' && active.mode !== 'tornado') await archiveActive();
   if (active) showSession(); else showSetup();
   renderGas();
-  setInterval(() => { if (!feeRequestsRunning) refreshFeeEstimate(); }, 60000);
+  renderSecurity();
 }
+
+// ---------- 私钥加密（见 vault.js） ----------
+const PLAIN_KEYS = ['active', 'history', 'gasWallet'];
+
+function showLock() {
+  appReady = false;
+  stopLoop();
+  clearTimeout(feeRefreshTimer);
+  feeRefreshEpoch++;
+  $('appBody').hidden = true;
+  $('secBox').hidden = true;
+  $('lock').hidden = false;
+  $('lockPasskey').hidden = !vault.meta.passkey;
+  $('lockPwRow').hidden = !vault.meta.password;
+  $('lockError').hidden = true;
+}
+
+async function unlock(method) {
+  if (securityBusy || appReady) return;
+  securityBusy = true;
+  const err = $('lockError');
+  err.hidden = true;
+  try {
+    await vaultUnlock(method, $('lockPw').value);
+    const data = await vaultOpen(await store.get('vaultData'));
+    active = data.active || null;
+    history = data.history || [];
+    gasWallet = data.gasWallet || null;
+    $('lockPw').value = '';
+    for (const k of PLAIN_KEYS) await store.remove(k); // 清掉可能残留的明文
+    await startApp();
+  } catch (e) {
+    err.textContent = e.code === 'BAD_SECRET' ? t('eLockBad')
+      : e.code === 'PRF_UNSUPPORTED' ? t('eSecNoPrf') : t('eLockFailed', { err: shortErr(e) });
+    err.hidden = false;
+  } finally {
+    securityBusy = false;
+  }
+}
+
+function renderSecurity() {
+  const m = vault.meta;
+  const names = [];
+  if (m && m.passkey) names.push(t('secMPasskey'));
+  if (m && m.password) names.push(t('secMPassword'));
+  $('secStatus').textContent = m ? t('secOn', { methods: names.join(' + ') }) : t('secOff');
+  $('secPasskey').textContent = t(m ? 'secAddPasskey' : 'secUsePasskey');
+  $('secPwToggle').textContent = t(m ? 'secAddPassword' : 'secUsePassword');
+  $('secPasskey').hidden = !!(m && m.passkey);
+  $('secPwToggle').hidden = !!(m && m.password);
+  if ($('secPwToggle').hidden) $('secPwForm').hidden = true;
+}
+
+// 开启加密，或在已开启时再添加一种解锁方式
+async function secureWith(method, password) {
+  const err = $('secError');
+  err.hidden = true;
+  if (busy || securityBusy) { err.textContent = t('mixBusy'); err.hidden = false; return; }
+  securityBusy = true;
+  try {
+    if (method === 'passkey' && !vaultPasskeySupported()) throw Object.assign(new Error('no passkey'), { code: 'NO_PASSKEY' });
+    if (vault.enabled) {
+      if (!(await reauth())) return;
+      await store.set('vaultMeta', await vaultAddMethod(method, password));
+    } else {
+      const meta = await vaultCreate(method, password); // 此后 persist() 写的是密文
+      await persist();
+      await store.set('vaultMeta', meta);
+      for (const k of PLAIN_KEYS) await store.remove(k); // 密文和 meta 都落盘后再删明文
+    }
+    $('secPw1').value = '';
+    $('secPw2').value = '';
+    $('secPwForm').hidden = true;
+    if ($('appBody').hidden) await startApp(); // 首次设置完成，进入主界面
+  } catch (e) {
+    const savedMeta = await store.get('vaultMeta');
+    if (!savedMeta) vaultForget(); // 开启到一半失败：保持未加密状态
+    else vault.meta = savedMeta;
+    err.textContent = e.code === 'NO_PASSKEY' ? t('eSecNoPasskey')
+      : e.code === 'PRF_UNSUPPORTED' ? t('eSecNoPrf') : t('eSecFailed', { err: shortErr(e) });
+    err.hidden = false;
+  } finally {
+    securityBusy = false;
+  }
+  renderSecurity();
+}
+
+// 显示私钥前再验证一次 Passkey 或密码。未开启加密（旧版本数据）时不允许显示，提示先开启加密。
+// 返回 true 表示验证通过，false 表示未通过或用户取消。
+function reauth() {
+  if (!vault.enabled) {
+    const err = $('secError');
+    err.textContent = t('eNeedEncrypt');
+    err.hidden = false;
+    $('secBox').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return Promise.resolve(false);
+  }
+  const dlg = $('auth');
+  const err = $('authError');
+  $('authPasskey').hidden = !vault.meta.passkey;
+  $('authPwRow').hidden = !vault.meta.password;
+  $('authPw').value = '';
+  err.hidden = true;
+  return new Promise((resolve) => {
+    const finish = (ok) => {
+      $('authPw').value = '';
+      dlg.onclose = null;
+      if (dlg.open) dlg.close();
+      resolve(ok);
+    };
+    const attempt = async (method) => {
+      err.hidden = true;
+      try {
+        await vaultVerify(method, $('authPw').value);
+        finish(true);
+      } catch (e) {
+        err.textContent = e.code === 'BAD_SECRET' ? t('eLockBad') : t('eLockFailed', { err: shortErr(e) });
+        err.hidden = false;
+      }
+    };
+    $('authPasskey').onclick = () => attempt('passkey');
+    $('authPwBtn').onclick = () => attempt('password');
+    $('authPw').onkeydown = (e) => { if (e.key === 'Enter') attempt('password'); };
+    $('authCancel').onclick = () => finish(false);
+    dlg.onclose = () => resolve(false); // 按 Esc 关闭
+    dlg.showModal();
+  });
+}
+
+function bindSecurity() {
+  $('lockPasskey').onclick = () => unlock('passkey');
+  $('lockPwBtn').onclick = () => unlock('password');
+  $('lockPw').onkeydown = (e) => { if (e.key === 'Enter') unlock('password'); };
+  $('secPasskey').onclick = () => secureWith('passkey');
+  $('secPwToggle').onclick = () => { $('secPwForm').hidden = !$('secPwForm').hidden; $('secError').hidden = true; };
+  $('secPwSave').onclick = () => {
+    const err = $('secError');
+    const p1 = $('secPw1').value;
+    if (p1.length < 8) { err.textContent = t('eSecShort'); err.hidden = false; return; }
+    if (p1 !== $('secPw2').value) { err.textContent = t('eSecMismatch'); err.hidden = false; return; }
+    secureWith('password', p1);
+  };
+}
+
 
 async function boot() {
   applyI18n();
@@ -924,8 +1208,8 @@ async function boot() {
   if (!navigator.locks) throw new Error(t('mixLockUnavailable'));
   await navigator.locks.request('relay-wallet-page-owner', { ifAvailable: true }, async (lock) => {
     if (!lock) {
-      $('setupError').hidden = false;
-      $('setupError').textContent = t('mixOtherPage');
+      $('ownerError').hidden = false;
+      $('ownerError').textContent = t('mixOtherPage');
       for (const el of document.querySelectorAll('button,input,select')) el.disabled = true;
       return;
     }
@@ -935,7 +1219,7 @@ async function boot() {
 }
 
 boot().catch((error) => {
-  $('setupError').textContent = shortErr(error);
-  $('setupError').hidden = false;
+  $('ownerError').textContent = shortErr(error);
+  $('ownerError').hidden = false;
   $('start').disabled = true;
 });

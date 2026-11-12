@@ -19,6 +19,10 @@ const context = await chromium.launchPersistentContext(profile, {
 const errors = [];
 let failPrices = false;
 let priceRequests = 0;
+let balanceRequests = 0;
+const balances = new Map();
+const failedBalances = new Set();
+const password = 'browser-test-password-2468';
 try {
   // All external traffic is mocked: this test never touches a funded chain.
   await context.route('https://**/*', async (route) => {
@@ -54,6 +58,13 @@ try {
       return 1;
     })();
     const respond = (item) => {
+      if (item.method === 'eth_getBalance') {
+        balanceRequests++;
+        const address = String(item.params[0]).toLowerCase();
+        if (failedBalances.has(address)) return { jsonrpc: '2.0', id: item.id, error: { code: -32000, message: 'balance unavailable' } };
+        return { jsonrpc: '2.0', id: item.id, result: balances.get(address) || '0x0' };
+      }
+
       if (item.method === 'eth_getBlockByNumber') return { jsonrpc: '2.0', id: item.id, result: {
         number: /^0x[0-9a-f]+$/i.test(item.params?.[0]) ? item.params[0] : '0x1000000',
         hash: '0x' + 'aa'.repeat(32), parentHash: '0x' + 'bb'.repeat(32),
@@ -76,6 +87,16 @@ try {
   const appUrl = `chrome-extension://${id}/app.html`;
   await page.goto(appUrl);
   await page.locator('#chain option').first().waitFor({ state: 'attached' });
+  await page.locator('#secBox').waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#appBody').isVisible(), false, 'Fresh installs require encryption before use');
+  assert.equal(priceRequests, 0, 'Onboarding must not trigger gas or price requests');
+  await page.locator('#secPwToggle').click();
+  await page.locator('#secPw1').fill(password);
+  await page.locator('#secPw2').fill(password);
+  await page.waitForFunction(() => !busy);
+  await page.locator('#secPwSave').click();
+  await page.locator('#appBody').waitFor({ state: 'visible' });
+  const readData = () => page.evaluate(async () => vaultOpen((await chrome.storage.local.get('vaultData')).vaultData));
   assert.equal(await page.locator('#mixMode').isChecked(), false);
   assert.equal(await page.locator('#mixMode').isVisible(), true);
   await page.waitForFunction(() =>
@@ -151,14 +172,18 @@ try {
   await page.locator('#start').click();
   await page.locator('#setupError').waitFor({ state: 'visible' });
   assert.match(await page.locator('#setupError').innerText(), /does not support|不支持/);
-  assert.equal(await page.evaluate(async () => (await chrome.storage.local.get('active')).active), undefined);
+  assert.equal((await readData()).active, null);
 
   await page.locator('#chain').selectOption('1');
   assert.equal(await page.locator('#mixMode').isChecked(), false);
   await page.locator('#mixMode').check();
   await page.locator('#start').click();
   await page.locator('#session').waitFor({ state: 'visible', timeout: 60000 });
-  const stored = await page.evaluate(async () => (await chrome.storage.local.get('active')).active);
+  const stored = (await readData()).active;
+  const rawStorage = await page.evaluate(() => chrome.storage.local.get(null));
+  for (const key of ['active', 'history', 'gasWallet']) assert.equal(rawStorage[key], undefined);
+  assert(!JSON.stringify(rawStorage).includes(stored.privateKey), 'First key leaked to raw storage');
+  assert(!JSON.stringify(rawStorage).includes(stored.secondWallet.privateKey), 'Second key leaked to raw storage');
   assert.equal(stored.mode, 'tornado');
   assert.match(stored.privateKey, /^0x[0-9a-f]{64}$/i);
   assert.match(stored.secondWallet.privateKey, /^0x[0-9a-f]{64}$/i);
@@ -186,22 +211,33 @@ try {
   assert.equal(proofCheck.proofLength, 514);
   assert.equal(proofCheck.recipient.toLowerCase(), stored.secondWallet.address.toLowerCase());
   assert.equal(verifier.verify(proofCheck.proof, proofCheck.args), true, 'The actual browser proof failed independent verification');
-  const waitingState = await page.evaluate(async () => (await chrome.storage.local.get('active')).active.mix);
+  const waitingState = (await readData()).active.mix;
   assert.equal(waitingState.phase, 'waiting');
   assert.equal(waitingState.error, undefined, 'Mocked RPC caused a hidden background failure');
   assert.equal(await page.locator('#status').evaluate((el) => el.classList.contains('err')), false);
 
   const duplicate = await context.newPage();
   await duplicate.goto(appUrl);
-  await duplicate.locator('#setupError').waitFor({ state: 'visible' });
-  assert.match(await duplicate.locator('#setupError').innerText(), /Another window|另一个窗口/);
+  await duplicate.locator('#ownerError').waitFor({ state: 'visible' });
+  assert.match(await duplicate.locator('#ownerError').innerText(), /Another window|另一个窗口/);
   assert.equal(await duplicate.locator('#start').isDisabled(), true);
   await duplicate.close();
 
   await page.locator('summary[data-i18n="mixBackupTitle"]').click();
+  let downloads = 0;
+  page.on('download', () => downloads++);
+  await page.locator('#mixBackup').click();
+  await page.locator('#authPw').fill('incorrect-password');
+  await page.locator('#authPwBtn').click();
+  await page.locator('#authError').waitFor({ state: 'visible' });
+  assert.equal(downloads, 0, 'Wrong password must not export keys');
+  await page.locator('#authCancel').click();
+  assert.equal(downloads, 0, 'Cancel must not export keys');
+  await page.locator('#mixBackup').click();
+  await page.locator('#authPw').fill(password);
   const [backup] = await Promise.all([
     page.waitForEvent('download'),
-    page.locator('#mixBackup').click(),
+    page.locator('#authPwBtn').click(),
   ]);
   assert.match(backup.suggestedFilename(), /^relay-wallet-backup-/);
   const backedUp = JSON.parse(await readFile(await backup.path(), 'utf8'));
@@ -213,14 +249,87 @@ try {
   assert.match(await page.locator('#mixSteps').innerText(), /第二钱包/);
 
   await page.reload();
+  await page.locator('#lock').waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#appBody').isVisible(), false);
+  const requestsWhileLocked = balanceRequests;
+  await page.locator('#lockPw').fill('incorrect-password');
+  await page.locator('#lockPwBtn').click();
+  await page.locator('#lockError').waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#appBody').isVisible(), false);
+  assert.equal(balanceRequests, requestsWhileLocked, 'Locked app must not monitor balances');
+  await page.locator('#lockPw').fill(password);
+  await page.locator('#lockPwBtn').click();
   await page.locator('#session').waitFor({ state: 'visible' });
   assert.equal(await page.locator('#address').innerText(), stored.address);
   assert.equal(await page.locator('#mixSecondAddress').innerText(), stored.secondWallet.address);
   assert.equal(await page.locator('html').getAttribute('lang'), 'zh-CN');
+  // Reveal requires its own authentication, independently of the earlier export.
+  await page.locator('summary[data-i18n="backupKey"]').click();
+  await page.locator('#reveal').click();
+  await page.locator('#authCancel').click();
+  assert.equal(await page.locator('#pk').isVisible(), false);
+  await page.locator('#reveal').click();
+  await page.locator('#authPw').fill(password);
+  await page.locator('#authPwBtn').click();
+  await page.locator('#pk').waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#pk').innerText(), stored.privateKey);
+  await page.locator('#reveal').click();
+
+  // Legacy migration preserves completed Tornado batches and both private keys.
+  const legacy = structuredClone(stored);
+  legacy.mixHistory = [{ notes: [{ note: 'legacy-note', depositIntent: { raw: 'legacy-journal' } }] }];
+  await page.evaluate(() => stopLoop());
+  await page.waitForFunction(() => !busy);
+  await page.evaluate(async (active) => {
+    await chrome.storage.local.clear();
+    await chrome.storage.local.set({ active, history: [], lang: 'zh' });
+  }, legacy);
+  await page.reload();
+  await page.locator('#session').waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#lock').isVisible(), false, 'Legacy data remains usable');
+  await page.locator('summary[data-i18n="backupKey"]').click();
+  await page.locator('#reveal').click();
+  await page.locator('#secError').waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#pk').isVisible(), false, 'Legacy keys cannot be revealed before encryption');
+  await page.locator('#secPwToggle').click();
+  await page.locator('#secPw1').fill(password);
+  await page.locator('#secPw2').fill(password);
+  await page.waitForFunction(() => !busy);
+  await page.locator('#secPwSave').click();
+  await page.waitForFunction(async () => {
+    const data = await chrome.storage.local.get(null);
+    return !!data.vaultMeta && data.active === undefined && !securityBusy;
+  });
+  const migrated = await readData();
+  assert.equal(migrated.active.secondWallet.privateKey, legacy.secondWallet.privateKey);
+  assert.deepEqual(migrated.active.mixHistory, legacy.mixHistory);
+  const migratedRaw = await page.evaluate(() => chrome.storage.local.get(null));
+  for (const key of ['active', 'history', 'gasWallet']) assert.equal(migratedRaw[key], undefined);
+  assert(!JSON.stringify(migratedRaw).includes('legacy-note'));
+
+  // Historical balances include the second Tornado wallet and reuse cache on language change.
+  balances.set(stored.secondWallet.address.toLowerCase(), '0xde0b6b3a7640000');
+  await page.evaluate(() => stopLoop());
+  await page.waitForFunction(() => !busy);
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.locator('#reset').click();
+  await page.locator('#history .bal.has-funds').waitFor({ state: 'visible' });
+  assert.match(await page.locator('#history .bal').innerText(), /第二钱包: 1 ETH/);
+  const cachedBalances = balanceRequests;
+  await page.locator('#lang').click();
+  assert.match(await page.locator('#history .bal').innerText(), /Second wallet: 1 ETH/);
+  assert.equal(balanceRequests, cachedBalances, 'Language change must reuse historical balance cache');
+  failedBalances.add(stored.address.toLowerCase());
+  await page.locator('#refreshHistory').click();
+  await page.waitForFunction(() => /lookup failed/.test(document.querySelector('#history .bal').textContent));
+  failedBalances.clear();
+  await page.locator('#refreshHistory').click();
+  await page.locator('#history .bal.has-funds').waitFor({ state: 'visible' });
+
   await mkdir(path.join(root, 'work'), { recursive: true });
   await page.screenshot({ path: path.join(root, 'work/beta-extension.png'), fullPage: true });
   assert.deepEqual(errors, [], 'Browser raised script errors');
-  console.log('PASS: actual MV3 extension, fee/price estimates and failure handling, ETH-only mode visibility, CSP/WASM workers, two durable wallets, progress, backup, duplicate-page lock, language and restart');
+  console.log('PASS: actual MV3 extension, fee/price estimates and failure handling, ETH-only mode visibility, CSP/WASM workers, two durable wallets, progress, password setup/unlock/re-authentication, encrypted backup and legacy migration, historical two-wallet balances, duplicate-page lock, language and restart');
 } finally {
   await context.close();
   await rm(profile, { recursive: true, force: true });

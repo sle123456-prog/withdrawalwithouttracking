@@ -98,6 +98,13 @@ test('token estimate includes three transaction fees but never counts gas-fundin
   assert.equal(withoutFunding.totalWei, String(130000n * 1200000000n));
 });
 
+test('manual gas top-up estimates no automatic refund transaction', async () => {
+  const h = harness({ provider: { estimateGas: async () => { throw new Error('insufficient funds'); } } });
+  const result = await h.estimator.estimate({ ...h.input, asset: TOKEN, includeReturn: false });
+  assert.deepEqual(result.components.map((x) => x.kind), ['tokenTransfer', 'gasFunding']);
+  assert.equal(result.totalWei, String(151000n * 1200000000n));
+});
+
 test('L2 oracle fees are included and an oracle failure is explicit rather than silently zero', async () => {
   const h = harness({ chain: { id: 10, symbol: 'ETH', l1Oracle: GAS_WALLET } });
   const complete = await h.estimator.estimate({ ...h.input, estimateL1Fee: async () => 123n });

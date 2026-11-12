@@ -223,8 +223,10 @@
             const funding = await transferGas(gasWallet, source === E.ZeroAddress ? SAMPLE_ADDRESS : source,
               ceil(BigInt(transfer.totalWei) * 130n, 100n), knownAddress(input.sourceAddress));
             await add('gasFunding', funding.request, funding.gas, funding.estimated);
-            const refund = await transferGas(source, gasWallet, 1n, knownAddress(input.gasWalletAddress));
-            await add('gasReturn', refund.request, refund.gas, refund.estimated);
+            if (input.includeReturn !== false) {
+              const refund = await transferGas(source, gasWallet, 1n, knownAddress(input.gasWalletAddress));
+              await add('gasReturn', refund.request, refund.gas, refund.estimated);
+            }
           }
         }
       } else {
