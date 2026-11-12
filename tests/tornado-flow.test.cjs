@@ -191,3 +191,182 @@ test('canonical receipt recheck catches a withdrawn-note reorg before the sweep'
   assert.equal(h.finalizes, 0);
   assert.equal(note.status, 'withdraw_pending');
 });
+
+async function completedHarness() {
+  const h = harness({ balance: 15n });
+  h.session.address = address(4);
+  h.prepared = 0;
+  const prepare = h.adapter.prepareNote;
+  h.adapter.prepareNote = async (...args) => { h.prepared++; return prepare(...args); };
+  // Only this round's canonical receipts represent its collected funds. The
+  // previous round has already been swept when a new round begins.
+  h.adapter.secondBalance = async (s) => s.mix.notes.reduce((sum, n) => {
+    const receipt = h.ledger.get(n.id)?.withdrawal;
+    return sum + (receipt?.status === 'confirmed' ? BigInt(receipt.amount) : 0n);
+  }, 0n);
+  const finalize = h.adapter.finalize;
+  h.adapter.finalize = async (s) => {
+    const result = await finalize(s);
+    result.amount = ((await h.adapter.secondBalance(s)) - 1n).toString();
+    return result;
+  };
+  await h.drive();
+  assert.equal(h.session.mix.phase, 'done');
+  h.balance = 5n;
+  return h;
+}
+
+test('a completed round keeps watching an insufficient remainder without archiving or paying again', async () => {
+  const h = await completedHarness();
+  const completed = h.session.mix;
+  completed.sourceBalanceWei = '15';
+  completed.nativeReserveWei = '2';
+  const snapshot = JSON.parse(JSON.stringify(completed));
+  h.adapter.balance = async (s) => {
+    s.mix.sourceBalanceWei = '7';
+    s.mix.nativeReserveWei = '1';
+    return h.balance;
+  };
+  for (let i = 0; i < 4; i++) await h.tick();
+  assert.equal(h.session.mix, completed);
+  assert.deepEqual(completed, snapshot);
+  assert.equal(h.session.mixHistory, undefined);
+  assert.equal(h.prepared, 1);
+  assert.equal(h.deposits, 1);
+  assert.equal(h.withdrawals, 1);
+  assert.equal(h.finalizes, 1);
+});
+
+test('later eligible funds start one durable new round and retain every old note and signed receipt', async (t) => {
+  t.mock.method(Date, 'now', () => 123456);
+  const h = await completedHarness();
+  const completed = h.session.mix;
+  const firstId = completed.notes[0].id;
+  completed.notes[0].operations = { deposit: [{ raw: 'original signed bytes', hash: hash(800) }] };
+  completed.finalization.raw = 'original final transfer bytes';
+  const snapshot = JSON.parse(JSON.stringify(completed));
+  const originalFirst = h.session.address;
+  const originalSecond = h.session.secondWallet;
+  h.balance = 10n;
+  await h.tick();
+  assert.equal(h.session.mixHistory.length, 1);
+  assert.equal(h.session.mixHistory[0], completed);
+  assert.deepEqual(h.saved.mixHistory[0], snapshot);
+  assert.equal(h.session.mix.round, 2);
+  assert.equal(h.session.mix.phase, 'waiting');
+  assert.equal(h.session.phase, 'waiting');
+  assert.equal(h.session.mix.snapshotWei, undefined);
+  assert.equal(h.session.mix.notes.length, 0);
+  assert.equal(h.prepared, 1, 'The rollover tick must only persist the handoff');
+  assert.equal(h.deposits, 1);
+  assert.equal(h.finalizes, 1);
+
+  await h.drive();
+  assert.equal(h.prepared, 2);
+  assert.equal(h.deposits, 2);
+  assert.equal(h.withdrawals, 2);
+  assert.equal(h.finalizes, 2);
+  assert.equal(h.session.mixHistory.length, 1);
+  assert.deepEqual(h.session.mixHistory[0], snapshot);
+  assert.equal(h.session.address, originalFirst);
+  assert.equal(h.session.secondWallet, originalSecond);
+  assert.notEqual(h.session.mix.notes[0].id, firstId, 'Round IDs must differ even within the same millisecond');
+  assert.equal(h.session.mix.createdAt, completed.createdAt);
+  h.balance = 0n;
+  await h.tick();
+  assert.equal(h.session.mixHistory.length, 1);
+  assert.equal(h.finalizes, 2);
+});
+
+test('a failed rollover save restores the old round and retries without duplicate history or transactions', async () => {
+  const h = await completedHarness();
+  const completed = h.session.mix;
+  const oldNotes = JSON.parse(JSON.stringify(completed.notes));
+  const save = h.adapter.save;
+  h.balance = 10n;
+  h.adapter.save = async () => { throw new Error('storage unavailable during rollover'); };
+  await assert.rejects(h.tick(), /storage unavailable/);
+  assert.equal(h.session.mix, completed);
+  assert.equal(h.session.phase, 'done');
+  assert.equal(h.session.mixHistory, undefined);
+  assert.deepEqual(h.session.mix.notes, oldNotes);
+  assert.equal(h.prepared, 1);
+  assert.equal(h.deposits, 1);
+  assert.equal(h.finalizes, 1);
+
+  h.adapter.save = save;
+  await h.tick();
+  assert.equal(h.session.mixHistory.length, 1);
+  assert.equal(h.prepared, 1);
+  h.session = JSON.parse(JSON.stringify(h.saved));
+  await h.drive();
+  assert.equal(h.session.mixHistory.length, 1);
+  assert.deepEqual(h.session.mixHistory[0].notes, oldNotes);
+  assert.equal(h.prepared, 2);
+  assert.equal(h.deposits, 2);
+  assert.equal(h.finalizes, 2);
+});
+
+test('restart after an uncertain rollover write resumes the persisted new round without archiving twice', async () => {
+  const h = await completedHarness();
+  const oldNotes = JSON.parse(JSON.stringify(h.session.mix.notes));
+  const save = h.adapter.save;
+  let first = true;
+  h.balance = 10n;
+  h.adapter.save = async (s) => {
+    if (first) {
+      first = false;
+      await save(s); // The write reached storage, but its acknowledgement was lost.
+    }
+    throw new Error('lost storage acknowledgement');
+  };
+  await assert.rejects(h.tick(), /lost storage acknowledgement/);
+  assert.equal(h.session.mix.phase, 'done');
+  assert.equal(h.saved.mix.phase, 'waiting');
+  assert.equal(h.saved.mixHistory.length, 1);
+  assert.equal(h.prepared, 1);
+  assert.equal(h.deposits, 1);
+
+  h.adapter.save = save;
+  h.session = JSON.parse(JSON.stringify(h.saved));
+  await h.drive();
+  assert.equal(h.session.mixHistory.length, 1);
+  assert.deepEqual(h.session.mixHistory[0].notes, oldNotes);
+  assert.equal(h.session.mix.round, 2);
+  assert.equal(h.prepared, 2);
+  assert.equal(h.deposits, 2);
+  assert.equal(h.finalizes, 2);
+});
+
+test('a completed legacy round without a round number can roll over while retaining existing history', async () => {
+  const h = await completedHarness();
+  delete h.session.mix.round;
+  const older = { version: 1, phase: 'done', notes: [{ note: 'older private note' }], finalization: { txHash: hash(50) } };
+  h.session.mixHistory = [older];
+  h.balance = 10n;
+  await h.tick();
+  assert.equal(h.session.mix.round, 3);
+  assert.equal(h.session.mixHistory.length, 2);
+  assert.equal(h.session.mixHistory[0], older);
+  assert.equal(h.saved.mixHistory[0].notes[0].note, 'older private note');
+  assert.equal(h.prepared, 1);
+  assert.equal(h.finalizes, 1);
+});
+
+test('a failed completed-balance probe cannot overwrite the archived source snapshot or reserve', async () => {
+  const h = await completedHarness();
+  const completed = h.session.mix;
+  h.adapter.balance = async (s) => {
+    s.mix.sourceBalanceWei = '999';
+    s.mix.nativeReserveWei = '42';
+    throw new Error('RPC balance failed');
+  };
+  await assert.rejects(h.tick(), /RPC balance failed/);
+  assert.equal(h.session.mix, completed);
+  assert.equal(Object.hasOwn(completed, 'sourceBalanceWei'), false);
+  assert.equal(Object.hasOwn(completed, 'nativeReserveWei'), false);
+  assert.equal(h.session.mixHistory, undefined);
+  assert.equal(h.prepared, 1);
+  assert.equal(h.deposits, 1);
+  assert.equal(h.finalizes, 1);
+});

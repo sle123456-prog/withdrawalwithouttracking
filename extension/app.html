@@ -105,6 +105,43 @@
     </details>
   </section>
 
+  <section id="feeEstimate" class="card fee-estimate" aria-labelledby="feeEstimateTitle">
+    <div class="row between">
+      <h2 id="feeEstimateTitle" data-i18n="feeEstimateTitle"></h2>
+      <button id="refreshFees" class="ghost small" data-i18n="feeRefresh"></button>
+    </div>
+    <div id="feeAmountRow" class="fee-amount-input" hidden>
+      <label for="feeAmount"><span data-i18n="feeAmountLabel"></span>
+        <input id="feeAmount" type="text" inputmode="decimal" placeholder="0.1" autocomplete="off" spellcheck="false" aria-describedby="feeAmountHint">
+      </label>
+      <p id="feeAmountHint" class="hint small-note" data-i18n="feeAmountHint"></p>
+    </div>
+    <p id="feeEstimateStatus" class="hint small-note" role="status" aria-live="polite" data-i18n="feeLoading"></p>
+    <dl class="fee-breakdown">
+      <div class="fee-line">
+        <dt data-i18n="feeNormalGasLabel"></dt>
+        <dd><span id="feeNormalNative" class="fee-native">—</span><span id="feeNormalUsd" class="fee-usd">—</span></dd>
+      </div>
+    </dl>
+    <div id="feeTornadoRow" class="fee-tornado" hidden>
+      <dl class="fee-breakdown">
+        <div class="fee-line">
+          <dt data-i18n="feeTornadoGasLabel"></dt>
+          <dd><span id="feeTornadoNative" class="fee-native">—</span><span id="feeTornadoUsd" class="fee-usd">—</span></dd>
+        </div>
+        <div class="fee-line">
+          <dt data-i18n="feeRelayerServiceLabel"></dt>
+          <dd id="feeRelayerService" class="fee-pending" data-i18n="feeServicePending"></dd>
+        </div>
+        <div id="feeTornadoTotal" class="fee-line fee-total">
+          <dt data-i18n="feeTotalLabel"></dt>
+          <dd><span id="feeTotalNative" class="fee-native">—</span><span id="feeTotalUsd" class="fee-usd">—</span></dd>
+        </div>
+      </dl>
+    </div>
+    <p id="feeEstimateNote" class="hint small-note" data-i18n="feeReferenceOnly"></p>
+  </section>
+
   <section id="gasBox" class="card">
     <h2 data-i18n="gasTitle"></h2>
     <p class="hint" data-i18n="gasHint"></p>
@@ -154,6 +191,7 @@
 <script src="tornado-relayer.js"></script>
 <script src="tornado-flow.js"></script>
 <script src="tornado-adapter.js"></script>
+<script src="fee-estimator.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

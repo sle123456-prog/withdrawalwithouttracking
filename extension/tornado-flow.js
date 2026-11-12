@@ -159,12 +159,55 @@
     await save(session, adapter);
   }
 
+  async function rolloverCompleted(session, adapter) {
+    const completed = session.mix;
+    const history = session.mixHistory;
+    requireThat(history === undefined || Array.isArray(history), 'mixInvalidJournal');
+    const round = completed.round ?? ((history ? history.length : 0) + 1);
+    requireThat(Number.isSafeInteger(round) && round > 0 && round < Number.MAX_SAFE_INTEGER, 'mixInvalidJournal');
+    const pools = await adapter.pools(session);
+    // The real adapter writes these live balance fields. A completed journal
+    // must keep its original fee reserve and source snapshot intact, even when
+    // a balance lookup fails, or while waiting for a later eligible deposit.
+    const balanceKeys = ['sourceBalanceWei', 'nativeReserveWei'];
+    const oldBalanceFields = balanceKeys.map((key) => ({ key,
+      present: Object.prototype.hasOwnProperty.call(completed, key), value: completed[key] }));
+    let available;
+    try {
+      available = await adapter.balance(session);
+    } finally {
+      for (const { key, present, value } of oldBalanceFields) {
+        if (present) completed[key] = value;
+        else delete completed[key];
+      }
+    }
+    if (planBalance(available, pools).plan.length === 0) return summary(session);
+
+    const previousPhase = session.phase;
+    session.mixHistory = [...(history || []), completed];
+    session.mix = { version: 1, round: round + 1, phase: 'waiting', notes: [], plan: [],
+      remainingWei: '0', expectedReceivedWei: '0' };
+    session.phase = 'waiting';
+    try {
+      // Persist the complete old journal and the new round together. No note is
+      // generated and no transaction is signed in this handoff tick.
+      await save(session, adapter);
+    } catch (error) {
+      session.mix = completed;
+      session.phase = previousPhase;
+      if (history === undefined) delete session.mixHistory;
+      else session.mixHistory = history;
+      throw error;
+    }
+    return summary(session);
+  }
+
   async function run(session, adapter, runtime) {
     requireThat(session && sameAddress(session.secondWallet && session.secondWallet.address,
       session.secondWallet && session.secondWallet.address), 'mixMissingSecondWallet');
     requireThat(ADDRESS.test(session.dest) && !sameAddress(session.dest, session.secondWallet.address), 'mixInvalidDestination');
     if (!session.mix) {
-      session.mix = { version: 1, phase: 'waiting', notes: [], plan: [], remainingWei: '0', expectedReceivedWei: '0' };
+      session.mix = { version: 1, round: 1, phase: 'waiting', notes: [], plan: [], remainingWei: '0', expectedReceivedWei: '0' };
       await save(session, adapter);
     }
     const mix = session.mix;
@@ -174,7 +217,7 @@
       runtime.mix = mix;
       runtime.verified = new Set();
     }
-    if (mix.phase === 'done') return summary(session);
+    if (mix.phase === 'done') return rolloverCompleted(session, adapter);
     if (mix.phase === 'finalizing') {
       await finishResult(session, await adapter.reconcileFinalization(session), adapter);
       return summary(session);
@@ -202,7 +245,7 @@
         HASH.test(secret.commitment) && HASH.test(secret.nullifierHash), 'mixInvalidNote');
       requireThat(!mix.notes.some((n) => n.commitment.toLowerCase() === secret.commitment.toLowerCase() ||
         n.nullifierHash.toLowerCase() === secret.nullifierHash.toLowerCase()), 'mixDuplicateNote');
-      mix.notes.push({ ...secret, id: `${mix.createdAt}:${index}`, pool: { ...pool },
+      mix.notes.push({ ...secret, id: `${mix.round || 1}:${mix.createdAt}:${index}`, pool: { ...pool },
         amount: pool.amount, status: 'prepared' });
       // The note is durable before its address/commitment can reach a contract.
       await save(session, adapter);
