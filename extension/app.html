@@ -16,6 +16,21 @@
     <p class="sub" data-i18n="subtitle"></p>
   </header>
 
+  <!-- Locked: shown instead of the app until the vault is unlocked -->
+  <section id="lock" class="card" hidden>
+    <h2 data-i18n="lockTitle"></h2>
+    <p class="hint" data-i18n="lockHint"></p>
+    <button id="lockPasskey" class="primary" data-i18n="lockPasskey" hidden></button>
+    <div id="lockPwRow" hidden>
+      <label><span data-i18n="secPassword"></span>
+        <input id="lockPw" type="password" autocomplete="off">
+      </label>
+      <button id="lockPwBtn" data-i18n="lockPwBtn"></button>
+    </div>
+    <p id="lockError" class="error" hidden></p>
+  </section>
+
+  <div id="appBody" hidden>
   <!-- Step 1: setup -->
   <section id="setup" class="card">
     <label><span data-i18n="chain"></span>
@@ -115,6 +130,28 @@
     <button id="clearHistory" class="ghost danger" data-i18n="clearHistory"></button>
   </section>
 
+  <section id="secBox" class="card">
+    <h2 data-i18n="secTitle"></h2>
+    <p id="secStatus" class="hint"></p>
+    <p class="warn" data-i18n="secLossWarn"></p>
+    <div class="row wrap">
+      <button id="secPasskey" data-i18n="secUsePasskey"></button>
+      <button id="secPwToggle" data-i18n="secUsePassword"></button>
+      <button id="secDisable" class="ghost danger" data-i18n="secDisable" hidden></button>
+    </div>
+    <div id="secPwForm" hidden>
+      <label><span data-i18n="secNewPassword"></span>
+        <input id="secPw1" type="password" autocomplete="new-password">
+      </label>
+      <label><span data-i18n="secRepeatPassword"></span>
+        <input id="secPw2" type="password" autocomplete="new-password">
+      </label>
+      <button id="secPwSave" data-i18n="save"></button>
+    </div>
+    <p id="secError" class="error" hidden></p>
+  </section>
+  </div>
+
   <footer>
     <p data-i18n="foot1"></p>
     <p data-i18n="foot2"></p>
@@ -124,6 +161,7 @@
 <script src="vendor/qrcode.js"></script>
 <script src="chains.js"></script>
 <script src="i18n.js"></script>
+<script src="vault.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

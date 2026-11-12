@@ -47,13 +47,25 @@ Integrating Bitget Wallet's gasless transfer (fee deducted from the USDT/USDC it
 Bitget Wallet's documentation does not state the minimum amount this method supports, so users could not be told in advance whether a given transfer would go through gasless.
 To avoid misleading users, the option is not offered; token forwarding always uses the gas wallet.
 
+## Private key encryption
+
+By default, private keys are stored in plain text in the browser's extension storage. Turn encryption on under **Private key encryption** at the bottom of the page:
+
+- **Passkey**: unlock with a passkey (fingerprint / face / PIN). The device or password manager holding the passkey must support the WebAuthn PRF extension; if it does not, the page says so and stays unencrypted.
+- **Password**: at least 8 characters; works everywhere.
+- Both can be set up, and either one unlocks. **Setting up both is recommended**: if every unlock method is lost (passkey deleted, device changed, password forgotten), the stored private keys cannot be recovered.
+- Once on, the current session, past addresses and the gas wallet (private keys and addresses) are stored together under AES-256-GCM, and the plain-text copies are deleted.
+- You unlock each time the page is opened or reloaded. Nothing is watched or forwarded while locked; it resumes after unlocking.
+- **Turn off encryption** stores the data in plain text again.
+- Encryption protects the data at rest on disk. While the page is unlocked the keys are in memory, so it does not protect against malware that already controls your browser.
+
 ## Security and limitations
 
-- Private keys are generated randomly on your machine and stored only in the browser's extension storage (unencrypted). They are never uploaded.
+- Private keys are generated randomly on your machine and stored only in the browser's extension storage. They are never uploaded. They are unencrypted by default; see above to turn encryption on.
 - After a reset, old addresses stay under **Past addresses**. If funds arrive there later, click **Restore** to forward them; you can also export the private key from the session view.
 - The **Past addresses** list shows each old address's native-coin balance (and the token balance for token sessions), marks non-zero ones with “has funds”, and has a Refresh button. Clearing the history permanently deletes those private keys, so any leftover gas on them becomes unrecoverable.
 - On-chain transfers are public: anyone can follow "exchange → one-time address → B" in a block explorer.
   This tool only keeps B out of the exchange's withdrawal records. It does not provide mixer-level anonymity.
-- The gas wallet's private key is also stored unencrypted on your machine. Keep only a small amount of gas in it.
+- The gas wallet's private key is stored alongside the others (in plain text unless encryption is on). Keep only a small amount of gas in it.
 - The gas wallet has an on-chain transfer with every one-time address, so it can be used to link your one-time addresses together.
 - Test with a small amount the first time you use it.

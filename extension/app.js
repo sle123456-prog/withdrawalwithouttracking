@@ -1,4 +1,5 @@
-/* global ethers, qrcode, CHAINS, chrome, t, applyI18n, LANG:writable */
+/* global ethers, qrcode, CHAINS, chrome, t, applyI18n, LANG:writable, vault, vaultCreate, vaultAddMethod,
+   vaultUnlock, vaultSeal, vaultOpen, vaultForget, vaultPasskeySupported */
 'use strict';
 
 const POLL_MS = 6000;
@@ -26,6 +27,10 @@ const store = {
     if (hasChromeStorage) return chrome.storage.local.set({ [key]: value });
     localStorage.setItem(key, JSON.stringify(value));
   },
+  async remove(key) {
+    if (hasChromeStorage) return chrome.storage.local.remove(key);
+    localStorage.removeItem(key);
+  },
 };
 
 let active = null; // 当前会话
@@ -36,8 +41,23 @@ let busy = false;
 let provider = null;
 let providerKey = '';
 
-const saveActive = () => store.set('active', active);
-const saveHistory = () => store.set('history', history);
+// 含私钥的三项数据统一落盘：开启加密时整体加密成 vaultData，否则按原来的明文键保存。
+// 串行执行，避免并发写入互相覆盖。
+let persistChain = Promise.resolve();
+function persist() {
+  persistChain = persistChain.catch(() => {}).then(async () => {
+    if (vault.enabled) {
+      await store.set('vaultData', await vaultSeal({ active, history, gasWallet }));
+    } else {
+      await store.set('active', active);
+      await store.set('history', history);
+      await store.set('gasWallet', gasWallet);
+    }
+  });
+  return persistChain;
+}
+const saveActive = persist;
+const saveHistory = persist;
 
 // ---------- 链访问 ----------
 const rpcKey = (s) => s.chainId + '|' + (s.rpc ? [s.rpc] : chainById(s.chainId).rpcs).join(',');
@@ -625,7 +645,7 @@ async function refreshGasBalance() {
 
 async function setGasWallet(w) {
   gasWallet = w ? { privateKey: w.privateKey, address: w.address } : null;
-  await store.set('gasWallet', gasWallet);
+  await persist();
   renderGas();
   if (active) $('gasMode').textContent = gasModeText(active); // 绑定/删除后立即反映在会话页
 }
@@ -668,6 +688,7 @@ async function init() {
     $('customTokenRow').hidden = asset !== 'custom';
     renderGas();
     renderHistory();
+    renderSecurity();
     if (active) {
       const chain = chainById(active.chainId);
       $('withdrawHint').textContent = t('withdrawHint', { net: chain.name });
@@ -721,14 +742,122 @@ async function init() {
     renderHistory();
   };
 
-  gasWallet = (await store.get('gasWallet')) || null;
   $('refreshHistory').onclick = refreshHistoryBalances;
-  history = (await store.get('history')) || [];
-  active = (await store.get('active')) || null;
+  bindSecurity();
+
+  vault.meta = (await store.get('vaultMeta')) || null;
+  if (vault.enabled) {
+    showLock();
+  } else {
+    gasWallet = (await store.get('gasWallet')) || null;
+    history = (await store.get('history')) || [];
+    active = (await store.get('active')) || null;
+    await startApp();
+  }
+}
+
+// 数据就绪（未加密，或已解锁）后进入主界面
+async function startApp() {
+  $('lock').hidden = true;
+  $('appBody').hidden = false;
   // 重启程序：上次已完成则直接开始新一轮；未完成的会话继续监听，避免资金滞留。
   if (active && active.phase === 'done') await archiveActive();
   if (active) showSession(); else showSetup();
   renderGas();
+  renderSecurity();
+}
+
+// ---------- 私钥加密（见 vault.js） ----------
+const PLAIN_KEYS = ['active', 'history', 'gasWallet'];
+
+function showLock() {
+  $('appBody').hidden = true;
+  $('lock').hidden = false;
+  $('lockPasskey').hidden = !vault.meta.passkey;
+  $('lockPwRow').hidden = !vault.meta.password;
+  $('lockError').hidden = true;
+}
+
+async function unlock(method) {
+  const err = $('lockError');
+  err.hidden = true;
+  try {
+    await vaultUnlock(method, $('lockPw').value);
+    const data = await vaultOpen(await store.get('vaultData'));
+    active = data.active || null;
+    history = data.history || [];
+    gasWallet = data.gasWallet || null;
+    $('lockPw').value = '';
+    for (const k of PLAIN_KEYS) await store.remove(k); // 清掉可能残留的明文
+    await startApp();
+  } catch (e) {
+    err.textContent = e.code === 'BAD_SECRET' ? t('eLockBad')
+      : e.code === 'PRF_UNSUPPORTED' ? t('eSecNoPrf') : t('eLockFailed', { err: shortErr(e) });
+    err.hidden = false;
+  }
+}
+
+function renderSecurity() {
+  const m = vault.meta;
+  const names = [];
+  if (m && m.passkey) names.push(t('secMPasskey'));
+  if (m && m.password) names.push(t('secMPassword'));
+  $('secStatus').textContent = m ? t('secOn', { methods: names.join(' + ') }) : t('secOff');
+  $('secPasskey').textContent = t(m ? 'secAddPasskey' : 'secUsePasskey');
+  $('secPwToggle').textContent = t(m ? 'secAddPassword' : 'secUsePassword');
+  $('secPasskey').hidden = !!(m && m.passkey);
+  $('secPwToggle').hidden = !!(m && m.password);
+  $('secDisable').hidden = !m;
+  if ($('secPwToggle').hidden) $('secPwForm').hidden = true;
+}
+
+// 开启加密，或在已开启时再添加一种解锁方式
+async function secureWith(method, password) {
+  const err = $('secError');
+  err.hidden = true;
+  try {
+    if (method === 'passkey' && !vaultPasskeySupported()) throw Object.assign(new Error('no passkey'), { code: 'NO_PASSKEY' });
+    if (vault.enabled) {
+      await store.set('vaultMeta', await vaultAddMethod(method, password));
+    } else {
+      const meta = await vaultCreate(method, password); // 此后 persist() 写的是密文
+      await persist();
+      await store.set('vaultMeta', meta);
+      for (const k of PLAIN_KEYS) await store.remove(k); // 密文和 meta 都落盘后再删明文
+    }
+    $('secPw1').value = '';
+    $('secPw2').value = '';
+    $('secPwForm').hidden = true;
+  } catch (e) {
+    if (!(await store.get('vaultMeta'))) vaultForget(); // 开启到一半失败：保持未加密状态
+    err.textContent = e.code === 'NO_PASSKEY' ? t('eSecNoPasskey')
+      : e.code === 'PRF_UNSUPPORTED' ? t('eSecNoPrf') : t('eSecFailed', { err: shortErr(e) });
+    err.hidden = false;
+  }
+  renderSecurity();
+}
+
+function bindSecurity() {
+  $('lockPasskey').onclick = () => unlock('passkey');
+  $('lockPwBtn').onclick = () => unlock('password');
+  $('lockPw').onkeydown = (e) => { if (e.key === 'Enter') unlock('password'); };
+  $('secPasskey').onclick = () => secureWith('passkey');
+  $('secPwToggle').onclick = () => { $('secPwForm').hidden = !$('secPwForm').hidden; $('secError').hidden = true; };
+  $('secPwSave').onclick = () => {
+    const err = $('secError');
+    const p1 = $('secPw1').value;
+    if (p1.length < 8) { err.textContent = t('eSecShort'); err.hidden = false; return; }
+    if (p1 !== $('secPw2').value) { err.textContent = t('eSecMismatch'); err.hidden = false; return; }
+    secureWith('password', p1);
+  };
+  $('secDisable').onclick = async () => {
+    if (!confirm(t('cSecDisable'))) return;
+    vaultForget();
+    await persist(); // 先写回明文
+    await store.remove('vaultMeta');
+    await store.remove('vaultData');
+    renderSecurity();
+  };
 }
 
 init();
