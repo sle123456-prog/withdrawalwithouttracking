@@ -152,6 +152,20 @@
   </section>
   </div>
 
+  <dialog id="auth">
+    <h2 data-i18n="authTitle"></h2>
+    <p class="hint" data-i18n="authHint"></p>
+    <button id="authPasskey" class="primary" data-i18n="authPasskey"></button>
+    <div id="authPwRow">
+      <label><span data-i18n="secPassword"></span>
+        <input id="authPw" type="password" autocomplete="off">
+      </label>
+      <button id="authPwBtn" data-i18n="authPwBtn"></button>
+    </div>
+    <p id="authError" class="error" hidden></p>
+    <button id="authCancel" class="ghost" data-i18n="cancel"></button>
+  </dialog>
+
   <footer>
     <p data-i18n="foot1"></p>
     <p data-i18n="foot2"></p>

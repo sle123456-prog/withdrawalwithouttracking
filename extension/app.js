@@ -1,5 +1,5 @@
 /* global ethers, qrcode, CHAINS, chrome, t, applyI18n, LANG:writable, vault, vaultCreate, vaultAddMethod,
-   vaultUnlock, vaultSeal, vaultOpen, vaultForget, vaultPasskeySupported */
+   vaultUnlock, vaultVerify, vaultSeal, vaultOpen, vaultForget, vaultPasskeySupported */
 'use strict';
 
 const POLL_MS = 6000;
@@ -711,8 +711,9 @@ async function init() {
     $('copyGas').textContent = t('copied');
     setTimeout(() => { $('copyGas').textContent = t('copy'); }, 1500);
   };
-  $('revealGas').onclick = () => {
+  $('revealGas').onclick = async () => {
     const el = $('gasPkShow');
+    if (el.hidden && !(await reauth())) return;
     el.hidden = !el.hidden;
     el.textContent = el.hidden ? '' : gasWallet.privateKey;
     $('revealGas').textContent = t(el.hidden ? 'showKey' : 'hideKey');
@@ -729,8 +730,9 @@ async function init() {
     $('copy').textContent = t('copied');
     setTimeout(() => { $('copy').textContent = t('copy'); }, 1500);
   };
-  $('reveal').onclick = () => {
+  $('reveal').onclick = async () => {
     const pk = $('pk');
+    if (pk.hidden && !(await reauth())) return;
     pk.hidden = !pk.hidden;
     pk.textContent = pk.hidden ? '' : active.privateKey;
     $('reveal').textContent = t(pk.hidden ? 'showKey' : 'hideKey');
@@ -837,6 +839,42 @@ async function secureWith(method, password) {
   renderSecurity();
 }
 
+// 敏感操作前再验证一次 Passkey 或密码。未开启加密时没有可验证的凭据，直接放行。
+// 返回 true 表示验证通过，false 表示用户取消。
+function reauth() {
+  if (!vault.enabled) return Promise.resolve(true);
+  const dlg = $('auth');
+  const err = $('authError');
+  $('authPasskey').hidden = !vault.meta.passkey;
+  $('authPwRow').hidden = !vault.meta.password;
+  $('authPw').value = '';
+  err.hidden = true;
+  return new Promise((resolve) => {
+    const finish = (ok) => {
+      $('authPw').value = '';
+      dlg.onclose = null;
+      if (dlg.open) dlg.close();
+      resolve(ok);
+    };
+    const attempt = async (method) => {
+      err.hidden = true;
+      try {
+        await vaultVerify(method, $('authPw').value);
+        finish(true);
+      } catch (e) {
+        err.textContent = e.code === 'BAD_SECRET' ? t('eLockBad') : t('eLockFailed', { err: shortErr(e) });
+        err.hidden = false;
+      }
+    };
+    $('authPasskey').onclick = () => attempt('passkey');
+    $('authPwBtn').onclick = () => attempt('password');
+    $('authPw').onkeydown = (e) => { if (e.key === 'Enter') attempt('password'); };
+    $('authCancel').onclick = () => finish(false);
+    dlg.onclose = () => resolve(false); // 按 Esc 关闭
+    dlg.showModal();
+  });
+}
+
 function bindSecurity() {
   $('lockPasskey').onclick = () => unlock('passkey');
   $('lockPwBtn').onclick = () => unlock('password');
@@ -852,6 +890,7 @@ function bindSecurity() {
   };
   $('secDisable').onclick = async () => {
     if (!confirm(t('cSecDisable'))) return;
+    if (!(await reauth())) return;
     vaultForget();
     await persist(); // 先写回明文
     await store.remove('vaultMeta');

@@ -138,6 +138,18 @@ async function vaultUnlock(method, password) {
   await vSetMaster(master);
 }
 
+// 已解锁状态下再验证一次身份（用于显示私钥等敏感操作）。验证失败抛出 code='BAD_SECRET'。
+async function vaultVerify(method, password) {
+  const m = vault.meta[method];
+  const kek = method === 'passkey' ? await vPrfKek(await vPasskeyPrf(m.credId, m.salt))
+    : await vPasswordKek(password, vunb64(m.salt), m.iter);
+  try {
+    await vOpen(kek, m.box);
+  } catch {
+    throw Object.assign(new Error('bad secret'), { code: 'BAD_SECRET' });
+  }
+}
+
 async function vaultSeal(obj) {
   return vSeal(vault.key, new TextEncoder().encode(JSON.stringify(obj)));
 }

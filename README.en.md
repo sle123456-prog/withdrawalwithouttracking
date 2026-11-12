@@ -56,6 +56,7 @@ By default, private keys are stored in plain text in the browser's extension sto
 - Both can be set up, and either one unlocks. **Setting up both is recommended**: if every unlock method is lost (passkey deleted, device changed, password forgotten), the stored private keys cannot be recovered.
 - Once on, the current session, past addresses and the gas wallet (private keys and addresses) are stored together under AES-256-GCM, and the plain-text copies are deleted.
 - You unlock each time the page is opened or reloaded. Nothing is watched or forwarded while locked; it resumes after unlocking.
+- With encryption on, **Show private key** (for the current session and the gas wallet) and **Turn off encryption** both ask you to verify your passkey or password again. With encryption off there is nothing to verify against, so keys are shown directly.
 - **Turn off encryption** stores the data in plain text again.
 - Encryption protects the data at rest on disk. While the page is unlocked the keys are in memory, so it does not protect against malware that already controls your browser.
 
