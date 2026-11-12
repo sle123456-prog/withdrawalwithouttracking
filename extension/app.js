@@ -754,14 +754,25 @@ async function init() {
     gasWallet = (await store.get('gasWallet')) || null;
     history = (await store.get('history')) || [];
     active = (await store.get('active')) || null;
-    await startApp();
+    // 新安装（没有任何数据）必须先设置加密；旧版本留下明文数据的可以继续用，但会提示开启加密。
+    if (active || history.length || gasWallet) await startApp(); else showOnboard();
   }
+}
+
+function showOnboard() {
+  $('appBody').hidden = true;
+  $('lock').hidden = true;
+  $('secBox').hidden = false;
+  $('secIntro').hidden = false;
+  renderSecurity();
 }
 
 // 数据就绪（未加密，或已解锁）后进入主界面
 async function startApp() {
   $('lock').hidden = true;
   $('appBody').hidden = false;
+  $('secBox').hidden = false;
+  $('secIntro').hidden = true;
   // 重启程序：上次已完成则直接开始新一轮；未完成的会话继续监听，避免资金滞留。
   if (active && active.phase === 'done') await archiveActive();
   if (active) showSession(); else showSetup();
@@ -774,6 +785,7 @@ const PLAIN_KEYS = ['active', 'history', 'gasWallet'];
 
 function showLock() {
   $('appBody').hidden = true;
+  $('secBox').hidden = true;
   $('lock').hidden = false;
   $('lockPasskey').hidden = !vault.meta.passkey;
   $('lockPwRow').hidden = !vault.meta.password;
@@ -809,7 +821,6 @@ function renderSecurity() {
   $('secPwToggle').textContent = t(m ? 'secAddPassword' : 'secUsePassword');
   $('secPasskey').hidden = !!(m && m.passkey);
   $('secPwToggle').hidden = !!(m && m.password);
-  $('secDisable').hidden = !m;
   if ($('secPwToggle').hidden) $('secPwForm').hidden = true;
 }
 
@@ -830,6 +841,7 @@ async function secureWith(method, password) {
     $('secPw1').value = '';
     $('secPw2').value = '';
     $('secPwForm').hidden = true;
+    if ($('appBody').hidden) await startApp(); // 首次设置完成，进入主界面
   } catch (e) {
     if (!(await store.get('vaultMeta'))) vaultForget(); // 开启到一半失败：保持未加密状态
     err.textContent = e.code === 'NO_PASSKEY' ? t('eSecNoPasskey')
@@ -839,10 +851,16 @@ async function secureWith(method, password) {
   renderSecurity();
 }
 
-// 敏感操作前再验证一次 Passkey 或密码。未开启加密时没有可验证的凭据，直接放行。
-// 返回 true 表示验证通过，false 表示用户取消。
+// 显示私钥前再验证一次 Passkey 或密码。未开启加密（旧版本数据）时不允许显示，提示先开启加密。
+// 返回 true 表示验证通过，false 表示未通过或用户取消。
 function reauth() {
-  if (!vault.enabled) return Promise.resolve(true);
+  if (!vault.enabled) {
+    const err = $('secError');
+    err.textContent = t('eNeedEncrypt');
+    err.hidden = false;
+    $('secBox').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return Promise.resolve(false);
+  }
   const dlg = $('auth');
   const err = $('authError');
   $('authPasskey').hidden = !vault.meta.passkey;
@@ -887,15 +905,6 @@ function bindSecurity() {
     if (p1.length < 8) { err.textContent = t('eSecShort'); err.hidden = false; return; }
     if (p1 !== $('secPw2').value) { err.textContent = t('eSecMismatch'); err.hidden = false; return; }
     secureWith('password', p1);
-  };
-  $('secDisable').onclick = async () => {
-    if (!confirm(t('cSecDisable'))) return;
-    if (!(await reauth())) return;
-    vaultForget();
-    await persist(); // 先写回明文
-    await store.remove('vaultMeta');
-    await store.remove('vaultData');
-    renderSecurity();
   };
 }
 

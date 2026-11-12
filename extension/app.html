@@ -130,14 +130,16 @@
     <button id="clearHistory" class="ghost danger" data-i18n="clearHistory"></button>
   </section>
 
-  <section id="secBox" class="card">
+  </div>
+
+  <section id="secBox" class="card" hidden>
     <h2 data-i18n="secTitle"></h2>
+    <p id="secIntro" data-i18n="secIntro" hidden></p>
     <p id="secStatus" class="hint"></p>
     <p class="warn" data-i18n="secLossWarn"></p>
     <div class="row wrap">
       <button id="secPasskey" data-i18n="secUsePasskey"></button>
       <button id="secPwToggle" data-i18n="secUsePassword"></button>
-      <button id="secDisable" class="ghost danger" data-i18n="secDisable" hidden></button>
     </div>
     <div id="secPwForm" hidden>
       <label><span data-i18n="secNewPassword"></span>
@@ -150,7 +152,6 @@
     </div>
     <p id="secError" class="error" hidden></p>
   </section>
-  </div>
 
   <dialog id="auth">
     <h2 data-i18n="authTitle"></h2>
