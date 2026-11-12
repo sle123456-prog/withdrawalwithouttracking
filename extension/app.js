@@ -463,6 +463,7 @@ function clearFeeValues() {
     $(id).textContent = '—';
   }
   $('feeRelayerService').textContent = t('feeServicePending');
+  $('feeRelayerNotice').hidden = false;
   $('feeEstimateNote').textContent = t('feeReferenceOnly');
 }
 
@@ -562,6 +563,7 @@ async function refreshFeeEstimate(forcePrice = false, scheduledEpoch) {
         $('feeTornadoUsd').textContent = formatFeeUsd(mix.networkUsd);
         $('feeRelayerService').textContent = mix.serviceFeeKnown ?
           formatFeeNative(mix.serviceWei, chain.symbol) + ' / ' + formatFeeUsd(mix.serviceUsd) : t('feeServicePending');
+        $('feeRelayerNotice').hidden = mix.serviceFeeKnown;
         $('feeTotalNative').textContent = mix.serviceFeeKnown ? formatFeeNative(mix.totalWei, chain.symbol) : t('feeTotalPending');
         $('feeTotalUsd').textContent = mix.serviceFeeKnown ? formatFeeUsd(mix.totalUsd) : '—';
         for (const warning of mix.warnings) warnings.add(warning);
@@ -570,6 +572,7 @@ async function refreshFeeEstimate(forcePrice = false, scheduledEpoch) {
         if (epoch !== feeRefreshEpoch) return;
         for (const id of ['feeTornadoNative', 'feeTornadoUsd', 'feeTotalNative', 'feeTotalUsd']) $(id).textContent = '—';
         $('feeRelayerService').textContent = t('feeServicePending');
+        $('feeRelayerNotice').hidden = false;
       }
     }
     if (epoch !== feeRefreshEpoch) return;

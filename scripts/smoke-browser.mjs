@@ -88,7 +88,10 @@ try {
   assert.match(await page.locator('#mixModeHint').innerText(), /not for beginners|小白禁用/);
   assert.match(await page.locator('#feeRelayerService').innerText(), /Not quoted yet|未取得报价/);
   assert.match(await page.locator('#feeTotalNative').innerText(), /Total unavailable|暂不能计算总额/);
-  assert.match(await page.locator('#feeEstimateNote').innerText(), /before funding does not request|入金前等待或刷新费用不会/);
+  assert.equal(await page.locator('#feeRelayerNotice').isVisible(), true);
+  assert.match(await page.locator('#feeRelayerNotice').innerText(), /before funding|入金前/);
+  assert.match(await page.locator('#feeRelayerNotice').innerText(), /waiting or refreshing will not produce|等待或刷新也不会更新/);
+  assert.match(await page.locator('#feeRelayerNotice').innerText(), /this is expected|这是正常流程/);
   assert.equal(await page.locator('#feeAmount').isVisible(), true);
   const feeValue = async () => Number((await page.locator('#feeTornadoNative').innerText()).replace(/[^\d.]/g, ''));
   const oneDepositFee = await feeValue();
